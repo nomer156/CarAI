@@ -6,6 +6,7 @@ export type VehicleProfile = {
   model: string;
   year: number;
   vin: string;
+  ownerCode: string;
   mileageKm: number;
   engine: string;
   plate: string;
@@ -94,6 +95,7 @@ export type StaffMember = {
   id: string;
   name: string;
   role: 'mechanic' | 'service_admin' | 'company_admin' | 'staff';
+  companyName: string;
   approvalStatus: ApprovalStatus;
   specialization: string;
   shift: string;
@@ -105,6 +107,7 @@ export type StaffMember = {
 export type ServiceQueueItem = {
   id: string;
   customer: string;
+  ownerCode: string;
   carLabel: string;
   workType: string;
   scheduledAt: string;
@@ -125,6 +128,7 @@ export type ServiceCenterProfile = {
 export type ClientProfile = {
   id: string;
   name: string;
+  ownerCode: string;
   phone: string;
   carLabel: string;
   lastVisit: string;
@@ -153,6 +157,9 @@ export type CompanySnapshot = {
 export type OwnerProfile = {
   id: string;
   name: string;
+  ownerCode: string;
+  primaryVehicle: string;
+  companyName: string;
   city: string;
   vehicles: number;
   lastSeen: string;

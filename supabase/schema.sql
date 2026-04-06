@@ -44,6 +44,7 @@ create table public.vehicles (
   model text not null,
   model_year int not null,
   vin text not null unique,
+  owner_code text unique,
   plate text,
   mileage_km int not null default 0,
   engine text,

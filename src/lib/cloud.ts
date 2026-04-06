@@ -21,6 +21,7 @@ type CloudVehicleRow = {
   model: string;
   model_year: number;
   vin: string;
+  owner_code: string | null;
   plate: string | null;
   mileage_km: number;
   engine: string | null;
@@ -342,6 +343,7 @@ export async function loadGarageStateFromCloud() {
     const mappedQueue = ((queueRows ?? []) as CloudQueueRow[]).map((row) => ({
       id: row.id,
       customer: row.customer_name,
+      ownerCode: 'CLOUD',
       carLabel: row.car_label,
       workType: row.work_type,
       scheduledAt: formatCloudDateTime(row.scheduled_at),
@@ -366,7 +368,7 @@ export async function loadGarageStateFromCloud() {
 
   const { data: vehicle, error: vehicleError } = await supabase
     .from('vehicles')
-    .select('id, brand, model, model_year, vin, plate, mileage_km, engine, color, next_inspection')
+    .select('id, brand, model, model_year, vin, owner_code, plate, mileage_km, engine, color, next_inspection')
     .order('created_at', { ascending: true })
     .limit(1)
     .maybeSingle<CloudVehicleRow>();
@@ -435,6 +437,7 @@ export async function loadGarageStateFromCloud() {
       model: vehicle.model,
       year: vehicle.model_year,
       vin: vehicle.vin,
+      ownerCode: vehicle.owner_code ?? demoState.vehicle.ownerCode,
       mileageKm: vehicle.mileage_km,
       engine: vehicle.engine ?? 'Не указано',
       plate: vehicle.plate ?? 'Не указан',

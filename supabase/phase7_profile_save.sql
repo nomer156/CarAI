@@ -18,6 +18,7 @@ as $$
 declare
   current_user_id uuid := auth.uid();
   target_vehicle_id uuid;
+  target_owner_code text;
 begin
   if current_user_id is null then
     raise exception 'Not authenticated';
@@ -43,6 +44,16 @@ begin
   order by created_at asc
   limit 1;
 
+  select owner_code into target_owner_code
+  from public.vehicles
+  where owner_id = current_user_id
+  order by created_at asc
+  limit 1;
+
+  if target_owner_code is null then
+    target_owner_code := 'CC-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 6));
+  end if;
+
   if target_vehicle_id is null then
     insert into public.vehicles (
       owner_id,
@@ -50,6 +61,7 @@ begin
       model,
       model_year,
       vin,
+      owner_code,
       plate,
       mileage_km,
       engine,
@@ -62,6 +74,7 @@ begin
       vehicle_model,
       vehicle_year,
       vehicle_vin,
+      target_owner_code,
       vehicle_plate,
       vehicle_mileage_km,
       vehicle_engine,
@@ -75,6 +88,7 @@ begin
         model = vehicle_model,
         model_year = vehicle_year,
         vin = vehicle_vin,
+        owner_code = coalesce(public.vehicles.owner_code, target_owner_code),
         plate = vehicle_plate,
         mileage_km = vehicle_mileage_km,
         engine = vehicle_engine,

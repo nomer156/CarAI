@@ -74,7 +74,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -770,6 +771,7 @@ h2 {
 }
 
 .assistant-input input {
+.assistant-input select {
   flex: 1;
   min-width: 0;
   padding: 14px 16px;
@@ -780,13 +782,40 @@ h2 {
   outline: none;
 }
 
-.assistant-input input:focus {
+.assistant-input input:focus,
+.assistant-input select:focus {
   border-color: rgba(95, 167, 216, 0.45);
   box-shadow: 0 0 0 4px rgba(95, 167, 216, 0.12);
 }
 
+.assistant-input select {
+  appearance: none;
+}
+
 .settings-footer {
   margin-top: 18px;
+}
+
+.owner-code-card {
+  display: grid;
+  gap: 8px;
+  padding: 18px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: var(--panel-strong);
+}
+
+.owner-code-card strong {
+  font-size: 1.7rem;
+  letter-spacing: 0.08em;
+}
+
+.part-card-actions,
+.part-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 @media (max-width: 1080px) {

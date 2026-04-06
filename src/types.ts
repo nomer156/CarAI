@@ -21,6 +21,7 @@ export type Part = {
   price: number;
   status: 'ok' | 'watch' | 'replace';
   note: string;
+  installationSource: 'self' | 'service';
 };
 
 export type MaintenanceTask = {
@@ -31,6 +32,7 @@ export type MaintenanceTask = {
   intervalKm: number;
   priority: 'low' | 'medium' | 'high';
   notes: string;
+  items: string[];
 };
 
 export type ServiceRecord = {
@@ -91,7 +93,7 @@ export type MechanicRecentJob = {
 export type StaffMember = {
   id: string;
   name: string;
-  role: 'mechanic' | 'service_admin';
+  role: 'mechanic' | 'service_admin' | 'company_admin' | 'staff';
   approvalStatus: ApprovalStatus;
   specialization: string;
   shift: string;

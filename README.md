@@ -49,6 +49,7 @@ npm run build
 - миграция администратора компании, цвета авто и brand media: `supabase/phase5_visuals_company_admin.sql`
 - cloud-bootstrap для `service_admin` и `company_admin`: `supabase/phase6_staff_bootstrap.sql`
 - сохранение owner/service профиля из приложения: `supabase/phase7_profile_save.sql`
+- удаление своих данных аккаунта для тестов: `supabase/phase8_delete_account.sql`
 - идеи и продуктовые апгрейды: `docs/PRODUCT_UPGRADES.md`
 - деплой для тестеров через `Cloudflare Pages`: `docs/DEPLOY_CLOUDFLARE_PAGES.md`
 

@@ -198,6 +198,7 @@ function mapParts(rows: CloudPartRow[]): Part[] {
     price: row.price ?? 0,
     status: row.status,
     note: row.note ?? '',
+    installationSource: 'service',
   }));
 }
 
@@ -210,6 +211,7 @@ function mapMaintenance(rows: CloudMaintenanceRow[]): MaintenanceTask[] {
     intervalKm: row.interval_km,
     priority: row.priority,
     notes: row.notes ?? '',
+    items: [],
   }));
 }
 
@@ -546,4 +548,15 @@ export async function saveStaffProfile(input: {
   }
 
   return data;
+}
+
+export async function deleteCloudAccountData() {
+  if (!supabase || !isSupabaseEnabled) {
+    throw new Error('Supabase is not configured.');
+  }
+
+  const { error } = await supabase.rpc('delete_my_account_data');
+  if (error) {
+    throw error;
+  }
 }

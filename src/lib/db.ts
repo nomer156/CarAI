@@ -32,3 +32,8 @@ export async function saveGarageState(state: GarageState) {
   const db = await getDatabase();
   await db.put(STORE_NAME, state, STATE_KEY);
 }
+
+export async function clearGarageState() {
+  const db = await getDatabase();
+  await db.delete(STORE_NAME, STATE_KEY);
+}

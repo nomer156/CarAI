@@ -53,7 +53,7 @@
 
 ## Почему работает как SPA
 
-В проект уже добавлен файл [public/_redirects](/e:/AI/CodexCar/public/_redirects#L1), чтобы прямые переходы по маршрутам не ломались при статическом хостинге.
+Для деплоя через `Cloudflare Pages + Wrangler` отдельный `_redirects` не нужен: SPA-fallback уже обрабатывается самим `Cloudflare` через `not_found_handling: "single-page-application"`.
 
 ## Если не хотите GitHub
 

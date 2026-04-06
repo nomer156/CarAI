@@ -1,0 +1,34 @@
+import { openDB } from 'idb';
+import type { DBSchema } from 'idb';
+import { demoState } from '../data/demoData';
+import type { GarageState } from '../types';
+
+type CodexCarDB = DBSchema & {
+  app: {
+    key: string;
+    value: GarageState;
+  };
+};
+
+const DB_NAME = 'codexcar-db';
+const STORE_NAME = 'app';
+const STATE_KEY = 'garage-state';
+
+async function getDatabase() {
+  return openDB<CodexCarDB>(DB_NAME, 1, {
+    upgrade(db) {
+      db.createObjectStore(STORE_NAME);
+    },
+  });
+}
+
+export async function loadGarageState() {
+  const db = await getDatabase();
+  const state = await db.get(STORE_NAME, STATE_KEY);
+  return state ?? demoState;
+}
+
+export async function saveGarageState(state: GarageState) {
+  const db = await getDatabase();
+  await db.put(STORE_NAME, state, STATE_KEY);
+}

@@ -97,6 +97,9 @@ export type StaffMember = {
   approvalStatus: ApprovalStatus;
   specialization: string;
   shift: string;
+  workplace: string;
+  salaryRub: number;
+  workStatus: 'on_shift' | 'off_shift' | 'day_off';
 };
 
 export type ServiceQueueItem = {
@@ -111,9 +114,48 @@ export type ServiceQueueItem = {
 export type ServiceCenterProfile = {
   name: string;
   city: string;
+  address: string;
+  phone: string;
+  workingHours: string;
   bays: number;
   activeOrders: number;
   queueDepth: number;
+};
+
+export type ClientProfile = {
+  id: string;
+  name: string;
+  phone: string;
+  carLabel: string;
+  lastVisit: string;
+  serviceCenter: string;
+};
+
+export type ActivityLog = {
+  id: string;
+  actor: string;
+  action: string;
+  target: string;
+  timestamp: string;
+  scope: 'service' | 'platform';
+};
+
+export type CompanySnapshot = {
+  id: string;
+  name: string;
+  city: string;
+  address: string;
+  employees: number;
+  owners: number;
+  status: 'healthy' | 'review' | 'attention';
+};
+
+export type OwnerProfile = {
+  id: string;
+  name: string;
+  city: string;
+  vehicles: number;
+  lastSeen: string;
 };
 
 export type GarageState = {
@@ -133,4 +175,8 @@ export type GarageState = {
   staff: StaffMember[];
   serviceQueue: ServiceQueueItem[];
   serviceCenter: ServiceCenterProfile;
+  clients: ClientProfile[];
+  activityLogs: ActivityLog[];
+  companies: CompanySnapshot[];
+  owners: OwnerProfile[];
 };

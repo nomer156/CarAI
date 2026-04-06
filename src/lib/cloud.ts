@@ -353,6 +353,9 @@ export async function loadGarageStateFromCloud() {
       serviceCenter: {
         name: serviceCenter.name,
         city: serviceCenter.city ?? 'Не указан',
+        address: `${serviceCenter.city ?? 'Город не указан'}, центральный адрес`,
+        phone: '+7 (495) 555-00-00',
+        workingHours: '08:00 - 21:00',
         bays: serviceCenter.bays,
         activeOrders: mappedQueue.filter((item) => item.status === 'in_service').length,
         queueDepth: mappedQueue.filter((item) => item.status !== 'ready').length,

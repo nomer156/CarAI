@@ -679,9 +679,22 @@ h2 {
 .metric-stack,
 .cloud-card,
 .maintenance-stack,
-.parts-grid {
+.parts-grid,
+.empty-state {
   display: grid;
   gap: 14px;
+}
+
+.empty-state {
+  place-items: start;
+  padding: 18px;
+  border-radius: 20px;
+  border: 1px dashed var(--border);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent);
+}
+
+.empty-state p {
+  color: var(--muted);
 }
 
 .parts-grid {

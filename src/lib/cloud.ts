@@ -126,6 +126,55 @@ type CloudClientRow = {
   last_visit: string;
 };
 
+function extractErrorText(error: unknown) {
+  if (!error) return '';
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'object' && 'message' in error) return String((error as { message?: unknown }).message ?? '');
+  return String(error);
+}
+
+export function humanizeCloudError(error: unknown) {
+  const message = extractErrorText(error);
+
+  if (!message) {
+    return 'Не удалось выполнить действие в облаке.';
+  }
+
+  if (message.includes('Supabase is not configured')) {
+    return 'Облако еще не подключено для этой сборки.';
+  }
+
+  if (message.includes('Not authenticated')) {
+    return 'Сессия истекла. Войдите снова через Google.';
+  }
+
+  if (message.includes('Vehicle not found')) {
+    return 'Автомобиль по этому ID не найден.';
+  }
+
+  if (message.includes('Service center not found')) {
+    return 'Для этого аккаунта еще не назначено СТО.';
+  }
+
+  if (message.includes('Insufficient permissions')) {
+    return 'Недостаточно прав для этого действия.';
+  }
+
+  if (message.includes('duplicate key value') || message.includes('409')) {
+    return 'Такие данные уже существуют. Проверьте VIN, номер или повторите попытку с другими значениями.';
+  }
+
+  if (message.includes('infinite recursion detected in policy')) {
+    return 'В базе еще не применено исправление прав доступа. Выполните последний SQL-файл в Supabase.';
+  }
+
+  if (message.includes('delete_my_account_data')) {
+    return 'Функция удаления еще не обновилась в Supabase. Повторите после применения последней миграции.';
+  }
+
+  return message;
+}
+
 function getAuthRedirectOrigin() {
   return window.location.hostname === '127.0.0.1'
     ? 'http://localhost:5173'

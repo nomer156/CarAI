@@ -1,4 +1,4 @@
-const CACHE_NAME = 'codexcar-static-v1';
+const CACHE_NAME = 'codexcar-static-v2';
 const APP_SHELL = ['/', '/manifest.webmanifest', '/icon-192.svg', '/icon-512.svg'];
 
 self.addEventListener('install', (event) => {
@@ -20,23 +20,38 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      if (cachedResponse) {
-        return cachedResponse;
-      }
+  const url = new URL(event.request.url);
+  const isSameOrigin = url.origin === self.location.origin;
+  const isNavigationRequest = event.request.mode === 'navigate';
 
-      return fetch(event.request)
+  if (isNavigationRequest) {
+    event.respondWith(
+      fetch(event.request)
         .then((networkResponse) => {
-          if (!networkResponse || networkResponse.status !== 200 || networkResponse.type !== 'basic') {
-            return networkResponse;
-          }
-
           const responseClone = networkResponse.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseClone));
+          caches.open(CACHE_NAME).then((cache) => cache.put('/', responseClone));
           return networkResponse;
         })
-        .catch(() => caches.match('/'));
-    }),
+        .catch(() => caches.match('/') || caches.match(event.request)),
+    );
+    return;
+  }
+
+  if (!isSameOrigin) {
+    return;
+  }
+
+  event.respondWith(
+    fetch(event.request)
+      .then((networkResponse) => {
+        if (!networkResponse || networkResponse.status !== 200) {
+          return networkResponse;
+        }
+
+        const responseClone = networkResponse.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseClone));
+        return networkResponse;
+      })
+      .catch(() => caches.match(event.request).then((cachedResponse) => cachedResponse || caches.match('/'))),
   );
 });

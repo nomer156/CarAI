@@ -78,6 +78,7 @@ create table public.parts (
   price numeric(10, 2),
   status text not null check (status in ('ok', 'watch', 'replace')),
   note text,
+  installation_source text not null default 'service' check (installation_source in ('self', 'service')),
   created_at timestamptz not null default now()
 );
 

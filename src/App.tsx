@@ -8,9 +8,9 @@ import {
 import { availableCarColors, resolveCarVisual, vehicleBrandOptions } from './data/carCatalog';
 import { demoState } from './data/demoData';
 import {
-  bootstrapDemoGarage, deleteCloudAccountData, getCurrentSession,
+  addServiceRecordByOwnerCode, bootstrapDemoGarage, deleteCloudAccountData, getCurrentSession,
   isSupabaseEnabled, loadGarageStateFromCloud, saveOwnerProfile, saveStaffProfile,
-  signInWithGoogle, signOutCloud, subscribeToAuthChanges,
+  signInWithGoogle, signOutCloud, subscribeToAuthChanges, upsertVehiclePart,
 } from './lib/cloud';
 import { clearGarageState, loadGarageState, saveGarageState } from './lib/db';
 import type { GarageState, MaintenanceTask, Part, StaffMember, UserRole } from './types';
@@ -93,6 +93,9 @@ function App() {
   const [clientLookupCode, setClientLookupCode] = useState('');
   const [ownerQrCode, setOwnerQrCode] = useState('');
   const [isScanningQr, setIsScanningQr] = useState(false);
+  const [activeServiceOwnerCode, setActiveServiceOwnerCode] = useState('');
+  const [serviceWorkTitle, setServiceWorkTitle] = useState('');
+  const [serviceWorkDetails, setServiceWorkDetails] = useState('');
   const assistantRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => { loadGarageState().then(setState).catch(() => setState(demoState)); }, []);
@@ -169,11 +172,41 @@ function App() {
     setIsSettingsOpen(false);
   }
 
-  function addPart(source: 'self' | 'service') {
+  async function addPart(source: 'self' | 'service') {
     const draft = source === 'self' ? ownerPartDraft : servicePartDraft;
     if (!draft.name.trim() || !draft.oem.trim()) return;
     const next: Part = { id: `part-${Date.now()}`, name: draft.name, oem: draft.oem, manufacturer: draft.manufacturer || 'Не указан', price: Number.parseInt(draft.price, 10) || 0, status: 'ok', note: draft.note || '', installationSource: source };
-    setState((current) => ({ ...current, parts: [next, ...current.parts] }));
+    if (session && hasCloudProfile) {
+      const targetOwnerCode = source === 'service' ? activeServiceOwnerCode : undefined;
+      if (source === 'service' && !targetOwnerCode) {
+        setSyncStatus('Сначала выберите авто владельца по ID или QR.');
+        return;
+      }
+      try {
+        await upsertVehiclePart({
+          ownerCode: targetOwnerCode,
+          name: next.name,
+          oem: next.oem,
+          manufacturer: next.manufacturer,
+          price: next.price,
+          status: next.status,
+          note: next.note,
+          installationSource: next.installationSource,
+        });
+        const cloudState = await loadGarageStateFromCloud();
+        if (cloudState && state.role === 'owner') {
+          setState(cloudState);
+        } else {
+          setState((current) => ({ ...current, parts: [next, ...current.parts] }));
+        }
+        setSyncStatus('Деталь сохранена в облаке.');
+      } catch (error) {
+        setSyncStatus(error instanceof Error ? error.message : 'Не удалось сохранить деталь.');
+        return;
+      }
+    } else {
+      setState((current) => ({ ...current, parts: [next, ...current.parts] }));
+    }
     source === 'self' ? setOwnerPartDraft(emptyPartDraft()) : setServicePartDraft(emptyPartDraft());
   }
 
@@ -188,19 +221,50 @@ function App() {
     });
   }
 
-  function savePartEdit() {
+  async function savePartEdit() {
     if (!editingPartId || !editingPartDraft.name.trim() || !editingPartDraft.oem.trim()) return;
-    setState((current) => ({
-      ...current,
-      parts: current.parts.map((part) => part.id === editingPartId ? {
-        ...part,
-        name: editingPartDraft.name,
-        oem: editingPartDraft.oem,
-        manufacturer: editingPartDraft.manufacturer || 'Не указан',
-        price: Number.parseInt(editingPartDraft.price, 10) || 0,
-        note: editingPartDraft.note,
-      } : part),
-    }));
+    const targetPart = state.parts.find((part) => part.id === editingPartId);
+    if (!targetPart) return;
+    const updatedPart: Part = {
+      ...targetPart,
+      name: editingPartDraft.name,
+      oem: editingPartDraft.oem,
+      manufacturer: editingPartDraft.manufacturer || 'Не указан',
+      price: Number.parseInt(editingPartDraft.price, 10) || 0,
+      note: editingPartDraft.note,
+    };
+    if (session && hasCloudProfile) {
+      const targetOwnerCode = state.role === 'owner' ? undefined : activeServiceOwnerCode;
+      if (state.role !== 'owner' && !targetOwnerCode) {
+        setSyncStatus('Сначала выберите авто владельца по ID или QR.');
+        return;
+      }
+      try {
+        await upsertVehiclePart({
+          ownerCode: targetOwnerCode,
+          partId: targetPart.id,
+          name: updatedPart.name,
+          oem: updatedPart.oem,
+          manufacturer: updatedPart.manufacturer,
+          price: updatedPart.price,
+          status: updatedPart.status,
+          note: updatedPart.note,
+          installationSource: updatedPart.installationSource,
+        });
+        const cloudState = await loadGarageStateFromCloud();
+        if (cloudState && state.role === 'owner') {
+          setState(cloudState);
+        } else {
+          setState((current) => ({ ...current, parts: current.parts.map((part) => part.id === editingPartId ? updatedPart : part) }));
+        }
+        setSyncStatus('Изменения детали сохранены.');
+      } catch (error) {
+        setSyncStatus(error instanceof Error ? error.message : 'Не удалось обновить деталь.');
+        return;
+      }
+    } else {
+      setState((current) => ({ ...current, parts: current.parts.map((part) => part.id === editingPartId ? updatedPart : part) }));
+    }
     setEditingPartId(null);
     setEditingPartDraft(emptyPartDraft());
   }
@@ -269,7 +333,55 @@ function App() {
         scope: 'service',
       }, ...current.activityLogs],
     }));
+    setActiveServiceOwnerCode(owner.ownerCode);
     setClientLookupCode('');
+  }
+
+  async function saveServiceWork() {
+    if (!serviceWorkTitle.trim() || !activeServiceOwnerCode) {
+      setSyncStatus('Сначала выберите авто владельца и заполните название работы.');
+      return;
+    }
+
+    if (session && hasCloudProfile) {
+      try {
+        await addServiceRecordByOwnerCode({
+          ownerCode: activeServiceOwnerCode,
+          title: serviceWorkTitle,
+          details: serviceWorkDetails,
+          location: state.serviceCenter.name,
+        });
+        setState((current) => ({
+          ...current,
+          recentJobs: [{
+            id: `job-${Date.now()}`,
+            carLabel: current.clients.find((item) => item.ownerCode === activeServiceOwnerCode)?.carLabel ?? activeServiceOwnerCode,
+            title: serviceWorkTitle,
+            finishedAt: new Date().toLocaleString('ru-RU'),
+            verified: true,
+          }, ...current.recentJobs],
+        }));
+        setServiceWorkTitle('');
+        setServiceWorkDetails('');
+        setSyncStatus('Работа сохранена в облаке.');
+      } catch (error) {
+        setSyncStatus(error instanceof Error ? error.message : 'Не удалось сохранить работу.');
+      }
+      return;
+    }
+
+    setState((current) => ({
+      ...current,
+      recentJobs: [{
+        id: `job-${Date.now()}`,
+        carLabel: current.clients.find((item) => item.ownerCode === activeServiceOwnerCode)?.carLabel ?? activeServiceOwnerCode,
+        title: serviceWorkTitle,
+        finishedAt: new Date().toLocaleString('ru-RU'),
+        verified: false,
+      }, ...current.recentJobs],
+    }));
+    setServiceWorkTitle('');
+    setServiceWorkDetails('');
   }
 
   async function scanOwnerQr() {
@@ -534,12 +646,12 @@ function App() {
 
         {state.role === 'mechanic' && activeTab === 'overview' && <section className="grid"><article className="panel panel-wide"><div className="timeline">{state.mechanicTasks.map((task) => <div className="timeline-item" key={task.id}><div><strong>{task.title}</strong><p>{task.carLabel} • {task.ownerName}</p><p className="muted">{task.bay} • {task.scheduledAt}</p></div><button className="ghost-button compact" onClick={() => setState((current) => ({ ...current, mechanicTasks: current.mechanicTasks.map((item) => item.id === task.id ? { ...item, status: 'done' } : item) }))}>Готово</button></div>)}</div></article></section>}
         {state.role === 'mechanic' && activeTab === 'parts' && <section className="grid"><article className="panel panel-wide"><div className="panel-heading"><div><h2>Добавить деталь</h2><p className="muted">Будет отмечена зеленой галочкой как работа СТО.</p></div><Plus size={20} /></div><div className="cloud-card"><div className="assistant-input"><input value={servicePartDraft.name} onChange={(event) => setServicePartDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Название" /></div><div className="assistant-input"><input value={servicePartDraft.oem} onChange={(event) => setServicePartDraft((current) => ({ ...current, oem: event.target.value }))} placeholder="OEM" /></div><div className="assistant-input"><input value={servicePartDraft.manufacturer} onChange={(event) => setServicePartDraft((current) => ({ ...current, manufacturer: event.target.value }))} placeholder="Производитель" /></div><div className="assistant-input"><input value={servicePartDraft.price} onChange={(event) => setServicePartDraft((current) => ({ ...current, price: event.target.value }))} placeholder="Цена" /></div><div className="assistant-input"><input value={servicePartDraft.note} onChange={(event) => setServicePartDraft((current) => ({ ...current, note: event.target.value }))} placeholder="Заметка" /></div><button className="primary-button" onClick={() => addPart('service')}>Добавить</button></div></article><article className="panel panel-wide"><div className="parts-grid">{state.parts.map(renderPartCard)}</div></article></section>}
-        {state.role === 'mechanic' && activeTab === 'maintenance' && <section className="grid"><article className="panel"><div className="panel-heading"><div><h2>Добавить по owner-коду</h2><p className="muted">Можно ввести ID вручную или считать QR с карточки владельца.</p></div><BadgeCheck size={22} /></div><div className="cloud-card"><div className="assistant-input"><input value={clientLookupCode} onChange={(event) => setClientLookupCode(event.target.value)} placeholder="UUID владельца" /></div><div className="hero-actions"><button className="ghost-button" onClick={scanOwnerQr} disabled={isScanningQr}>{isScanningQr ? 'Сканируем...' : 'Считать QR'}</button><button className="primary-button" onClick={addClientByOwnerCode}>Добавить в очередь</button></div></div></article>{state.serviceQueue.map((item) => <article className="panel" key={item.id}><strong>{item.workType}</strong><p>{item.customer} • {item.carLabel}</p><p className="muted">{item.scheduledAt}</p><span className="source-badge neutral">{item.ownerCode}</span></article>)}</section>}
-        {state.role === 'mechanic' && activeTab === 'history' && <section className="grid"><article className="panel panel-wide"><div className="timeline">{state.recentJobs.map((job) => <div className="timeline-item" key={job.id}><div><strong>{job.title}</strong><p>{job.carLabel}</p><p className="muted">{job.finishedAt}</p></div><span className={`source-badge ${job.verified ? 'service' : 'neutral'}`}>{job.verified ? 'Подтверждено' : 'Ждет подтверждения'}</span></div>)}</div></article></section>}
+        {state.role === 'mechanic' && activeTab === 'maintenance' && <section className="grid"><article className="panel"><div className="panel-heading"><div><h2>Добавить по owner-коду</h2><p className="muted">Можно ввести ID вручную или считать QR с карточки владельца.</p></div><BadgeCheck size={22} /></div><div className="cloud-card"><div className="assistant-input"><input value={clientLookupCode} onChange={(event) => setClientLookupCode(event.target.value)} placeholder="UUID владельца" /></div><div className="hero-actions"><button className="ghost-button" onClick={scanOwnerQr} disabled={isScanningQr}>{isScanningQr ? 'Сканируем...' : 'Считать QR'}</button><button className="primary-button" onClick={addClientByOwnerCode}>Добавить в очередь</button></div>{activeServiceOwnerCode ? <span className="source-badge service">Выбрано авто: {activeServiceOwnerCode}</span> : null}</div></article>{state.serviceQueue.map((item) => <article className="panel" key={item.id}><strong>{item.workType}</strong><p>{item.customer} • {item.carLabel}</p><p className="muted">{item.scheduledAt}</p><div className="admin-badges"><span className="source-badge neutral">{item.ownerCode}</span><button className="ghost-button compact" onClick={() => setActiveServiceOwnerCode(item.ownerCode)}>Выбрать авто</button></div></article>)}</section>}
+        {state.role === 'mechanic' && activeTab === 'history' && <section className="grid"><article className="panel"><div className="panel-heading"><div><h2>Добавить работу</h2><p className="muted">Сохраняется по выбранному ID владельца.</p></div><Wrench size={22} /></div><div className="cloud-card"><div className="assistant-input"><input value={serviceWorkTitle} onChange={(event) => setServiceWorkTitle(event.target.value)} placeholder="Например: Замена масла и фильтра" /></div><div className="assistant-input"><input value={serviceWorkDetails} onChange={(event) => setServiceWorkDetails(event.target.value)} placeholder="Детали работы" /></div>{activeServiceOwnerCode ? <span className="source-badge service">ID владельца: {activeServiceOwnerCode}</span> : <span className="source-badge neutral">Сначала выберите авто в разделе Клиенты</span>}<button className="primary-button" onClick={saveServiceWork}>Сохранить работу</button></div></article><article className="panel panel-wide"><div className="timeline">{state.recentJobs.map((job) => <div className="timeline-item" key={job.id}><div><strong>{job.title}</strong><p>{job.carLabel}</p><p className="muted">{job.finishedAt}</p></div><span className={`source-badge ${job.verified ? 'service' : 'neutral'}`}>{job.verified ? 'Подтверждено' : 'Ждет подтверждения'}</span></div>)}</div></article></section>}
         {state.role === 'mechanic' && activeTab === 'assistant' && <section className="grid" ref={assistantRef}><article className="panel panel-wide assistant-panel"><div className="assistant-log">{assistantLog.map((message, index) => <p key={`${message}-${index}`}>{message}</p>)}</div><div className="assistant-input"><input value={assistantInput} onChange={(event) => setAssistantInput(event.target.value)} placeholder="Рабочая заметка" /><button className="primary-button" onClick={() => { if (!assistantInput.trim()) return; setAssistantLog((current) => [...current, `Вы: ${assistantInput}`, `AI: ${assistantReply(assistantInput, state)}`]); setAssistantInput(''); }}>Сохранить</button></div></article></section>}
 
         {state.role === 'service_admin' && activeTab === 'overview' && <section className="grid"><article className="panel panel-wide"><div className="panel-heading"><div><h2>СТО и команда</h2><p className="muted">{state.serviceCenter.city}, {state.serviceCenter.address}</p></div><Users size={22} /></div><div className="vehicle-grid"><div><span>Часы работы</span><strong>{state.serviceCenter.workingHours}</strong></div><div><span>Телефон</span><strong>{state.serviceCenter.phone}</strong></div><div><span>Постов</span><strong>{state.serviceCenter.bays}</strong></div><div><span>Активных заказов</span><strong>{state.serviceCenter.activeOrders}</strong></div></div><div className="timeline">{state.staff.map((member) => <div className="timeline-item" key={member.id}><div><strong>{member.name}</strong><p>{member.role === 'mechanic' ? 'Механик' : member.role === 'service_admin' ? 'Администратор' : 'Сотрудник'}</p><p className="muted">{member.specialization} • {member.shift} • {member.workplace}</p></div><div className="admin-badges"><span className="source-badge neutral">{member.companyName}</span><span className={`source-badge ${member.workStatus === 'on_shift' ? 'service' : member.workStatus === 'off_shift' ? 'neutral' : 'self'}`}>{member.workStatus === 'on_shift' ? 'На смене' : member.workStatus === 'off_shift' ? 'Не в смене' : 'Выходной'}</span><span className="source-badge neutral">{member.salaryRub.toLocaleString('ru-RU')} ₽</span>{member.role === 'mechanic' && member.approvalStatus !== 'approved' && <button className="ghost-button compact" onClick={() => setState((current) => ({ ...current, staff: current.staff.map((item) => item.id === member.id ? { ...item, approvalStatus: 'approved' } : item) }))}>Подтвердить</button>}{member.role === 'mechanic' && member.approvalStatus !== 'inactive' && <button className="ghost-button compact" onClick={() => setState((current) => ({ ...current, staff: current.staff.map((item) => item.id === member.id ? { ...item, approvalStatus: 'inactive' } : item) }))}>Деактивировать</button>}</div></div>)}</div></article><article className="panel"><div className="panel-heading"><div><h2>Добавить сотрудника</h2><p className="muted">Не-механики добавляются как обычный персонал сервиса.</p></div><Plus size={20} /></div><div className="cloud-card"><div className="assistant-input"><input value={employeeDraft.name} onChange={(event) => setEmployeeDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Имя сотрудника" /></div><div className="assistant-input"><select value={employeeDraft.role} onChange={(event) => setEmployeeDraft((current) => ({ ...current, role: event.target.value as StaffRoleOption }))}><option value="mechanic">Механик</option><option value="staff">Сотрудник</option><option value="service_admin">Администратор</option></select></div><div className="assistant-input"><input value={employeeDraft.specialization} onChange={(event) => setEmployeeDraft((current) => ({ ...current, specialization: event.target.value }))} placeholder="Специализация" /></div><div className="assistant-input"><input value={employeeDraft.shift} onChange={(event) => setEmployeeDraft((current) => ({ ...current, shift: event.target.value }))} placeholder="График" /></div><div className="assistant-input"><input value={employeeDraft.salaryRub} onChange={(event) => setEmployeeDraft((current) => ({ ...current, salaryRub: event.target.value }))} placeholder="Оклад" /></div><button className="primary-button" onClick={addEmployee}>Добавить сотрудника</button></div></article></section>}
-        {state.role === 'service_admin' && activeTab === 'maintenance' && <section className="grid"><article className="panel"><div className="panel-heading"><div><h2>Добавить по owner-коду</h2><p className="muted">Можно считать QR или ввести ID владельца вручную.</p></div><BadgeCheck size={22} /></div><div className="cloud-card"><div className="assistant-input"><input value={clientLookupCode} onChange={(event) => setClientLookupCode(event.target.value)} placeholder="UUID владельца" /></div><div className="hero-actions"><button className="ghost-button" onClick={scanOwnerQr} disabled={isScanningQr}>{isScanningQr ? 'Сканируем...' : 'Считать QR'}</button><button className="primary-button" onClick={addClientByOwnerCode}>Добавить в очередь</button></div></div></article><article className="panel panel-wide"><div className="panel-heading"><div><h2>Клиенты</h2><p className="muted">ID владельца помогает быстро находить машину и историю.</p></div><Wrench size={22} /></div><div className="timeline">{state.clients.map((client) => <div className="timeline-item" key={client.id}><div><strong>{client.name}</strong><p>{client.phone} • {client.carLabel}</p><p className="muted">Последний визит: {client.lastVisit} • {client.serviceCenter}</p></div><div className="admin-badges"><span className="source-badge neutral">{client.ownerCode}</span><span className="source-badge neutral">Клиент</span></div></div>)}</div></article>{state.serviceQueue.map((item) => <article className="panel" key={item.id}><strong>{item.workType}</strong><p>{item.customer} • {item.carLabel}</p><p className="muted">{item.scheduledAt}</p><span className="source-badge neutral">{item.ownerCode}</span></article>)}</section>}
+        {state.role === 'service_admin' && activeTab === 'maintenance' && <section className="grid"><article className="panel"><div className="panel-heading"><div><h2>Добавить по owner-коду</h2><p className="muted">Можно считать QR или ввести ID владельца вручную.</p></div><BadgeCheck size={22} /></div><div className="cloud-card"><div className="assistant-input"><input value={clientLookupCode} onChange={(event) => setClientLookupCode(event.target.value)} placeholder="UUID владельца" /></div><div className="hero-actions"><button className="ghost-button" onClick={scanOwnerQr} disabled={isScanningQr}>{isScanningQr ? 'Сканируем...' : 'Считать QR'}</button><button className="primary-button" onClick={addClientByOwnerCode}>Добавить в очередь</button></div>{activeServiceOwnerCode ? <span className="source-badge service">Выбрано авто: {activeServiceOwnerCode}</span> : null}</div></article><article className="panel panel-wide"><div className="panel-heading"><div><h2>Клиенты</h2><p className="muted">ID владельца помогает быстро находить машину и историю.</p></div><Wrench size={22} /></div><div className="timeline">{state.clients.map((client) => <div className="timeline-item" key={client.id}><div><strong>{client.name}</strong><p>{client.phone} • {client.carLabel}</p><p className="muted">Последний визит: {client.lastVisit} • {client.serviceCenter}</p></div><div className="admin-badges"><span className="source-badge neutral">{client.ownerCode}</span><button className="ghost-button compact" onClick={() => setActiveServiceOwnerCode(client.ownerCode)}>Выбрать авто</button></div></div>)}</div></article>{state.serviceQueue.map((item) => <article className="panel" key={item.id}><strong>{item.workType}</strong><p>{item.customer} • {item.carLabel}</p><p className="muted">{item.scheduledAt}</p><div className="admin-badges"><span className="source-badge neutral">{item.ownerCode}</span><button className="ghost-button compact" onClick={() => setActiveServiceOwnerCode(item.ownerCode)}>Выбрать авто</button></div></article>)}</section>}
         {state.role === 'service_admin' && activeTab === 'history' && <section className="grid"><article className="panel"><div className="panel-heading"><div><h2>Логи и действия</h2><p className="muted">Кто что менял в сервисе.</p></div><BadgeCheck size={22} /></div><div className="timeline">{state.activityLogs.filter((item) => item.scope === 'service').map((log) => <div className="timeline-item" key={log.id}><div><strong>{log.actor}</strong><p>{log.action}</p><p className="muted">{log.target} • {log.timestamp}</p></div></div>)}</div></article><article className="panel"><div className="panel-heading"><div><h2>ФОТ по сотрудникам</h2><p className="muted">Стандартный обзор окладов команды.</p></div><Users size={22} /></div><div className="timeline">{state.staff.map((member) => <div className="timeline-item" key={member.id}><div><strong>{member.name}</strong><p>{member.specialization}</p></div><strong>{member.salaryRub.toLocaleString('ru-RU')} ₽</strong></div>)}</div></article></section>}
         {state.role === 'service_admin' && activeTab === 'assistant' && <section className="grid" ref={assistantRef}><article className="panel panel-wide assistant-panel"><div className="assistant-log">{assistantLog.map((message, index) => <p key={`${message}-${index}`}>{message}</p>)}</div><div className="assistant-input"><input value={assistantInput} onChange={(event) => setAssistantInput(event.target.value)} placeholder="Заметка администратора СТО" /><button className="primary-button" onClick={() => { if (!assistantInput.trim()) return; setAssistantLog((current) => [...current, `Вы: ${assistantInput}`, `AI: ${assistantReply(assistantInput, state)}`]); setAssistantInput(''); }}>Сохранить</button></div></article></section>}
 

@@ -38,6 +38,7 @@ type CloudPartRow = {
   price: number | null;
   status: 'ok' | 'watch' | 'replace';
   note: string | null;
+  installation_source: 'self' | 'service' | null;
 };
 
 type CloudMaintenanceRow = {
@@ -211,7 +212,7 @@ function mapParts(rows: CloudPartRow[]): Part[] {
     price: row.price ?? 0,
     status: row.status,
     note: row.note ?? '',
-    installationSource: 'service',
+    installationSource: row.installation_source === 'self' ? 'self' : 'service',
   }));
 }
 
@@ -401,7 +402,7 @@ export async function loadGarageStateFromCloud() {
     documentsResult,
     offersResult,
   ] = await Promise.all([
-    supabase.from('parts').select('id, name, oem, manufacturer, price, status, note').eq('vehicle_id', vehicle.id),
+    supabase.from('parts').select('id, name, oem, manufacturer, price, status, note, installation_source').eq('vehicle_id', vehicle.id),
     supabase
       .from('maintenance_tasks')
       .select('id, title, due_at_km, last_done_km, interval_km, priority, notes')
@@ -580,4 +581,62 @@ export async function deleteCloudAccountData() {
     }
     throw error;
   }
+}
+
+export async function upsertVehiclePart(input: {
+  ownerCode?: string;
+  partId?: string | null;
+  name: string;
+  oem: string;
+  manufacturer: string;
+  price: number;
+  status: 'ok' | 'watch' | 'replace';
+  note: string;
+  installationSource: 'self' | 'service';
+}) {
+  if (!supabase || !isSupabaseEnabled) {
+    throw new Error('Supabase is not configured.');
+  }
+
+  const { data, error } = await supabase.rpc('upsert_vehicle_part', {
+    target_owner_code: input.ownerCode ?? null,
+    target_part_id: input.partId ?? null,
+    part_name: input.name,
+    part_oem: input.oem,
+    part_manufacturer: input.manufacturer,
+    part_price: input.price,
+    part_status: input.status,
+    part_note: input.note,
+    part_source: input.installationSource,
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
+}
+
+export async function addServiceRecordByOwnerCode(input: {
+  ownerCode: string;
+  title: string;
+  details?: string;
+  location?: string;
+}) {
+  if (!supabase || !isSupabaseEnabled) {
+    throw new Error('Supabase is not configured.');
+  }
+
+  const { data, error } = await supabase.rpc('add_service_record_by_owner_code', {
+    target_owner_code: input.ownerCode,
+    record_title: input.title,
+    record_details: input.details ?? null,
+    record_location: input.location ?? null,
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
 }

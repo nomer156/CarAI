@@ -29,11 +29,24 @@ create table public.service_queue (
   id uuid primary key default gen_random_uuid(),
   service_center_id uuid not null references public.service_centers(id) on delete cascade,
   vehicle_id uuid references public.vehicles(id) on delete set null,
+  owner_code text,
   customer_name text not null,
   car_label text not null,
   work_type text not null,
   scheduled_at timestamptz not null,
   status text not null check (status in ('new', 'confirmed', 'in_service', 'ready')),
+  created_at timestamptz not null default now()
+);
+
+create table public.service_clients (
+  id uuid primary key default gen_random_uuid(),
+  service_center_id uuid not null references public.service_centers(id) on delete cascade,
+  vehicle_id uuid references public.vehicles(id) on delete set null,
+  owner_code text not null,
+  customer_name text not null,
+  customer_phone text,
+  car_label text not null,
+  last_visit date not null default current_date,
   created_at timestamptz not null default now()
 );
 
@@ -150,6 +163,7 @@ alter table public.marketplace_offers enable row level security;
 alter table public.service_centers enable row level security;
 alter table public.service_center_staff enable row level security;
 alter table public.service_queue enable row level security;
+alter table public.service_clients enable row level security;
 alter table public.vehicle_brand_media enable row level security;
 
 create policy "users can view own profile"

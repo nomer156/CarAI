@@ -109,11 +109,21 @@ type CloudServiceCenterRow = {
 
 type CloudQueueRow = {
   id: string;
+  owner_code: string | null;
   customer_name: string;
   car_label: string;
   work_type: string;
   scheduled_at: string;
   status: 'new' | 'confirmed' | 'in_service' | 'ready';
+};
+
+type CloudClientRow = {
+  id: string;
+  owner_code: string;
+  customer_name: string;
+  customer_phone: string | null;
+  car_label: string;
+  last_visit: string;
 };
 
 function getAuthRedirectOrigin() {
@@ -328,7 +338,11 @@ export async function loadGarageStateFromCloud() {
       return baseState;
     }
 
-    const [{ data: serviceCenter, error: serviceCenterError }, { data: queueRows, error: queueError }] = await Promise.all([
+    const [
+      { data: serviceCenter, error: serviceCenterError },
+      { data: queueRows, error: queueError },
+      { data: clientRows, error: clientsError },
+    ] = await Promise.all([
       supabase
         .from('service_centers')
         .select('id, name, city, bays')
@@ -336,9 +350,14 @@ export async function loadGarageStateFromCloud() {
         .maybeSingle<CloudServiceCenterRow>(),
       supabase
         .from('service_queue')
-        .select('id, customer_name, car_label, work_type, scheduled_at, status')
+        .select('id, owner_code, customer_name, car_label, work_type, scheduled_at, status')
         .eq('service_center_id', membership.service_center_id)
         .order('scheduled_at', { ascending: true }),
+      supabase
+        .from('service_clients')
+        .select('id, owner_code, customer_name, customer_phone, car_label, last_visit')
+        .eq('service_center_id', membership.service_center_id)
+        .order('last_visit', { ascending: false }),
     ]);
 
     if (serviceCenterError) {
@@ -349,6 +368,10 @@ export async function loadGarageStateFromCloud() {
       throw queueError;
     }
 
+    if (clientsError) {
+      throw clientsError;
+    }
+
     if (!serviceCenter) {
       return baseState;
     }
@@ -356,11 +379,21 @@ export async function loadGarageStateFromCloud() {
     const mappedQueue = ((queueRows ?? []) as CloudQueueRow[]).map((row) => ({
       id: row.id,
       customer: row.customer_name,
-      ownerCode: 'CLOUD',
+      ownerCode: row.owner_code ?? 'CLOUD',
       carLabel: row.car_label,
       workType: row.work_type,
       scheduledAt: formatCloudDateTime(row.scheduled_at),
       status: row.status,
+    }));
+
+    const mappedClients = ((clientRows ?? []) as CloudClientRow[]).map((row) => ({
+      id: row.id,
+      name: row.customer_name,
+      ownerCode: row.owner_code,
+      phone: row.customer_phone ?? 'Не указан',
+      carLabel: row.car_label,
+      lastVisit: row.last_visit,
+      serviceCenter: serviceCenter.name,
     }));
 
     return {
@@ -375,6 +408,7 @@ export async function loadGarageStateFromCloud() {
         activeOrders: mappedQueue.filter((item) => item.status === 'in_service').length,
         queueDepth: mappedQueue.filter((item) => item.status !== 'ready').length,
       },
+      clients: mappedClients.length > 0 ? mappedClients : baseState.clients,
       serviceQueue: mappedQueue.length > 0 ? mappedQueue : baseState.serviceQueue,
     };
   }
@@ -632,6 +666,28 @@ export async function addServiceRecordByOwnerCode(input: {
     record_title: input.title,
     record_details: input.details ?? null,
     record_location: input.location ?? null,
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
+}
+
+export async function addVehicleToServiceIntake(input: {
+  ownerCode: string;
+  workType?: string;
+  customerPhone?: string;
+}) {
+  if (!supabase || !isSupabaseEnabled) {
+    throw new Error('Supabase is not configured.');
+  }
+
+  const { data, error } = await supabase.rpc('add_vehicle_to_service_intake', {
+    target_owner_code: input.ownerCode,
+    requested_work_type: input.workType ?? 'Новая запись по owner-коду',
+    customer_phone: input.customerPhone ?? null,
   });
 
   if (error) {

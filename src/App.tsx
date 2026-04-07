@@ -8,7 +8,7 @@ import {
 import { availableCarColors, resolveCarVisual, vehicleBrandOptions } from './data/carCatalog';
 import { demoState } from './data/demoData';
 import {
-  addServiceRecordByOwnerCode, bootstrapDemoGarage, deleteCloudAccountData, getCurrentSession,
+  addServiceRecordByOwnerCode, addVehicleToServiceIntake, bootstrapDemoGarage, deleteCloudAccountData, getCurrentSession,
   isSupabaseEnabled, loadGarageStateFromCloud, saveOwnerProfile, saveStaffProfile,
   signInWithGoogle, signOutCloud, subscribeToAuthChanges, upsertVehiclePart,
 } from './lib/cloud';
@@ -289,6 +289,23 @@ function App() {
   function addClientByOwnerCode() {
     const lookup = clientLookupCode.trim().toUpperCase();
     if (!lookup) return;
+    if ((state.role === 'mechanic' || state.role === 'service_admin') && session && hasCloudProfile) {
+      void addVehicleToServiceIntake({
+        ownerCode: lookup,
+        workType: 'Новая запись по owner-коду',
+      }).then(async () => {
+        const cloudState = await loadGarageStateFromCloud();
+        if (cloudState) {
+          setState(cloudState);
+        }
+        setActiveServiceOwnerCode(lookup);
+        setClientLookupCode('');
+        setSyncStatus('Клиент и очередь сохранены в облаке.');
+      }).catch((error) => {
+        setSyncStatus(error instanceof Error ? error.message : 'Не удалось добавить клиента в очередь.');
+      });
+      return;
+    }
     const owner = state.owners.find((item) => item.ownerCode.toUpperCase() === lookup)
       ?? (state.vehicle.ownerCode.toUpperCase() === lookup ? {
         id: 'owner-current',

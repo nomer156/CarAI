@@ -135,6 +135,7 @@ button {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .settings-panel,
@@ -452,6 +453,7 @@ h2 {
   display: flex;
   align-items: center;
   gap: 14px;
+  min-width: 0;
 }
 
 .passport-visual {
@@ -466,6 +468,10 @@ h2 {
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+
+.passport-collapsed div:last-child {
+  min-width: 0;
 }
 
 .passport-details {
@@ -506,6 +512,19 @@ h2 {
 .detail-list div {
   display: grid;
   gap: 4px;
+}
+
+.passport-collapsed strong,
+.passport-collapsed p,
+.vehicle-grid strong,
+.vehicle-grid span,
+.part-card strong,
+.part-card p,
+.part-card span,
+.timeline-item strong,
+.timeline-item p {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .approval-card {
@@ -770,7 +789,11 @@ h2 {
   background: rgba(255, 255, 255, 0.12);
 }
 
-.assistant-input input {
+.assistant-input {
+  align-items: stretch;
+}
+
+.assistant-input input,
 .assistant-input select {
   flex: 1;
   min-width: 0;
@@ -852,6 +875,11 @@ h2 {
     flex-direction: column;
   }
 
+  .auth-strip {
+    width: 100%;
+    justify-content: stretch;
+  }
+
   h1 {
     max-width: none;
     font-size: 2.5rem;
@@ -874,6 +902,14 @@ h2 {
   .ghost-button,
   .primary-button {
     width: 100%;
+  }
+
+  .auth-strip .primary-button,
+  .auth-strip .ghost-button,
+  .auth-strip .pill,
+  .theme-toggle {
+    width: 100%;
+    justify-content: center;
   }
 
   .segmented {
@@ -905,5 +941,25 @@ h2 {
     min-width: 0;
     padding: 12px 8px;
     font-size: 0.8rem;
+  }
+
+  .passport-toggle {
+    align-items: flex-start;
+  }
+
+  .passport-collapsed {
+    width: 100%;
+  }
+
+  .passport-visual {
+    width: 96px;
+    min-width: 96px;
+    height: 64px;
+  }
+
+  .part-card-actions,
+  .part-edit-actions {
+    width: 100%;
+    justify-content: flex-start;
   }
 }

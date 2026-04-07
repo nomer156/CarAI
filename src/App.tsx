@@ -62,6 +62,7 @@ function App() {
   const [hasCloudProfile, setHasCloudProfile] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isPassportExpanded, setIsPassportExpanded] = useState(false);
+  const [isVehicleEditorOpen, setIsVehicleEditorOpen] = useState(false);
   const [expandedMaintenanceId, setExpandedMaintenanceId] = useState<string | null>('to-1');
   const [quickCommand, setQuickCommand] = useState('');
   const [assistantInput, setAssistantInput] = useState('');
@@ -88,11 +89,12 @@ function App() {
     if (state.role === 'owner') setProfileName(state.ownerName);
     if (state.role === 'mechanic') setProfileName(state.mechanicName);
     if (state.role === 'service_admin' || state.role === 'company_admin') {
+      setProfileName(state.role === 'service_admin' ? 'Админ СТО' : 'Модератор');
       setServiceCenterName(state.serviceCenter.name);
       setServiceCenterCity(state.serviceCenter.city);
       setServiceCenterBays(String(state.serviceCenter.bays));
     }
-  }, [state]);
+  }, [state.role, state.ownerName, state.mechanicName, state.serviceCenter.name, state.serviceCenter.city, state.serviceCenter.bays]);
   useEffect(() => { saveGarageState(state).catch(() => undefined); }, [state]);
   useEffect(() => {
     if (!isSupabaseEnabled) return;
@@ -294,8 +296,10 @@ function App() {
           color: state.vehicle.color,
           nextInspection: state.vehicle.nextInspection,
         });
+        setState((current) => ({ ...current, ownerName: profileName }));
       } else if (state.role === 'mechanic') {
         await bootstrapDemoGarage(profileName.trim(), 'mechanic');
+        setState((current) => ({ ...current, mechanicName: profileName, approvalStatus: 'pending' }));
       } else {
         await saveStaffProfile({
           profileName,
@@ -304,7 +308,17 @@ function App() {
           serviceCenterCity,
           serviceCenterBays: Number.parseInt(serviceCenterBays, 10) || 1,
         });
+        setState((current) => ({
+          ...current,
+          serviceCenter: {
+            ...current.serviceCenter,
+            name: serviceCenterName,
+            city: serviceCenterCity,
+            bays: Number.parseInt(serviceCenterBays, 10) || 1,
+          },
+        }));
       }
+      setHasCloudProfile(true);
       const cloudState = await loadGarageStateFromCloud();
       if (cloudState) {
         setState(cloudState);
@@ -359,6 +373,37 @@ function App() {
             <span className={`source-badge ${sourceClass}`}><Check size={14} />{sourceLabel}</span>
             <p className="muted">{part.note}</p>
           </>
+        )}
+      </article>
+    );
+  }
+
+  function renderVehicleEditor() {
+    return (
+      <article className="panel panel-wide">
+        <div className="panel-heading">
+          <div>
+            <h2>Сведения об авто</h2>
+            <p className="muted">Марка, модель, номер, VIN и технические данные.</p>
+          </div>
+          <button className="ghost-button compact" onClick={() => setIsVehicleEditorOpen((current) => !current)}>
+            <Pencil size={14} />
+            {isVehicleEditorOpen ? 'Свернуть' : 'Изменить'}
+          </button>
+        </div>
+        {isVehicleEditorOpen && (
+          <div className="cloud-card">
+            <div className="assistant-input"><select value={state.vehicle.brand} onChange={(event) => updateVehicleBrand(event.target.value)}>{vehicleBrandOptions.map((option) => <option key={option.brand} value={option.brand}>{option.brand}</option>)}</select></div>
+            <div className="assistant-input"><select value={state.vehicle.model} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, model: event.target.value } }))}>{selectedBrandOption.models.map((model) => <option key={model} value={model}>{model}</option>)}</select></div>
+            <div className="assistant-input"><input value={state.vehicle.plate} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, plate: event.target.value } }))} placeholder="Номер" /></div>
+            <div className="assistant-input"><input value={state.vehicle.vin} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, vin: event.target.value } }))} placeholder="VIN" /></div>
+            <div className="assistant-input"><input value={String(state.vehicle.mileageKm)} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, mileageKm: Number.parseInt(event.target.value, 10) || 0 } }))} placeholder="Пробег" /></div>
+            <div className="assistant-input"><input value={state.vehicle.engine} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, engine: event.target.value } }))} placeholder="Двигатель" /></div>
+            <div className="assistant-input"><input value={profileName} onChange={(event) => setProfileName(event.target.value)} placeholder="Имя владельца" /></div>
+            <button className="primary-button" onClick={() => { setState((current) => ({ ...current, ownerName: profileName })); setSyncStatus('Изменения автомобиля сохранены локально.'); }}>
+              Сохранить сведения
+            </button>
+          </div>
         )}
       </article>
     );
@@ -420,14 +465,14 @@ function App() {
       <nav className="tabs tabs-top">{tabs.map((tab) => <button key={tab} className={activeTab === tab ? 'active' : ''} onClick={() => setActiveTab(tab)}>{tabLabels[tab]}</button>)}</nav>
 
       <main className="dashboard">
-        {state.role === 'owner' && activeTab === 'overview' && <section className="grid"><article className="panel"><div className="panel-heading"><div><h2>Ваш owner code</h2><p className="muted">По этому коду механик или админ СТО могут быстро найти ваш автомобиль.</p></div><BadgeCheck size={22} /></div><div className="owner-code-card"><strong>{state.vehicle.ownerCode}</strong><p className="muted">{state.ownerName} • {state.vehicle.brand} {state.vehicle.model}</p></div></article><article className="panel"><div className="panel-heading"><div><h2>Быстрый обзор</h2><p className="muted">Коротко о текущем состоянии автомобиля.</p></div><Wrench size={22} /></div><div className="vehicle-grid"><div><span>Марка</span><strong>{state.vehicle.brand}</strong></div><div><span>Модель</span><strong>{state.vehicle.model}</strong></div><div><span>Пробег</span><strong>{state.vehicle.mileageKm.toLocaleString('ru-RU')} км</strong></div><div><span>Ближайшее ТО</span><strong>{state.maintenance[0]?.title ?? 'Не задано'}</strong></div></div></article></section>}
-        {state.role === 'owner' && activeTab === 'parts' && <section className="grid"><article className="panel"><div className="panel-heading"><div><h2>Добавить деталь</h2><p className="muted">Получит желтую галочку: менял сам.</p></div><Plus size={20} /></div><div className="cloud-card"><div className="assistant-input"><input value={ownerPartDraft.name} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Название" /></div><div className="assistant-input"><input value={ownerPartDraft.oem} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, oem: event.target.value }))} placeholder="OEM" /></div><div className="assistant-input"><input value={ownerPartDraft.manufacturer} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, manufacturer: event.target.value }))} placeholder="Производитель" /></div><div className="assistant-input"><input value={ownerPartDraft.price} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, price: event.target.value }))} placeholder="Цена" /></div><div className="assistant-input"><input value={ownerPartDraft.note} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, note: event.target.value }))} placeholder="Заметка" /></div><button className="primary-button" onClick={() => addPart('self')}>Добавить</button></div></article><article className="panel panel-wide"><div className="parts-grid">{state.parts.map(renderPartCard)}</div></article></section>}
+        {state.role === 'owner' && activeTab === 'overview' && <section className="grid"><article className="panel"><div className="panel-heading"><div><h2>Ваш owner code</h2><p className="muted">По этому коду механик или админ СТО могут быстро найти ваш автомобиль.</p></div><BadgeCheck size={22} /></div><div className="owner-code-card"><strong>{state.vehicle.ownerCode}</strong><p className="muted">{state.ownerName} • {state.vehicle.brand} {state.vehicle.model}</p></div></article><article className="panel"><div className="panel-heading"><div><h2>Быстрый обзор</h2><p className="muted">Коротко о текущем состоянии автомобиля.</p></div><Wrench size={22} /></div><div className="vehicle-grid"><div><span>Марка</span><strong>{state.vehicle.brand}</strong></div><div><span>Модель</span><strong>{state.vehicle.model}</strong></div><div><span>Пробег</span><strong>{state.vehicle.mileageKm.toLocaleString('ru-RU')} км</strong></div><div><span>Ближайшее ТО</span><strong>{state.maintenance[0]?.title ?? 'Не задано'}</strong></div></div></article>{renderVehicleEditor()}</section>}
+        {state.role === 'owner' && activeTab === 'parts' && <section className="grid"><article className="panel panel-wide"><div className="panel-heading"><div><h2>Добавить деталь</h2><p className="muted">Получит желтую галочку: менял сам.</p></div><Plus size={20} /></div><div className="cloud-card"><div className="assistant-input"><input value={ownerPartDraft.name} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Название" /></div><div className="assistant-input"><input value={ownerPartDraft.oem} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, oem: event.target.value }))} placeholder="OEM" /></div><div className="assistant-input"><input value={ownerPartDraft.manufacturer} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, manufacturer: event.target.value }))} placeholder="Производитель" /></div><div className="assistant-input"><input value={ownerPartDraft.price} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, price: event.target.value }))} placeholder="Цена" /></div><div className="assistant-input"><input value={ownerPartDraft.note} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, note: event.target.value }))} placeholder="Заметка" /></div><button className="primary-button" onClick={() => addPart('self')}>Добавить</button></div></article><article className="panel panel-wide"><div className="parts-grid">{state.parts.map(renderPartCard)}</div></article></section>}
         {state.role === 'owner' && activeTab === 'maintenance' && <section className="grid"><article className="panel panel-wide maintenance-stack">{state.maintenance.map((task) => <article className="maintenance-card" key={task.id}><button className="maintenance-toggle" onClick={() => setExpandedMaintenanceId((current) => current === task.id ? null : task.id)}><div><strong>{task.title}</strong><p className="muted">{task.dueAtKm.toLocaleString('ru-RU')} км</p></div>{expandedMaintenanceId === task.id ? <ChevronUp size={18} /> : <ChevronDown size={18} />}</button><div className="progress-track"><div className="progress-bar" style={{ width: `${maintenanceProgress(task, state.vehicle.mileageKm)}%` }} /></div>{expandedMaintenanceId === task.id && <div className="maintenance-details"><ul className="stack-list">{task.items.map((item) => <li key={item}>{item}</li>)}</ul><p className="muted">{task.notes}</p></div>}</article>)}</article></section>}
         {state.role === 'owner' && activeTab === 'history' && <section className="grid"><article className="panel panel-wide"><div className="timeline">{state.records.map((record) => <div className="timeline-item" key={record.id}><div><strong>{record.title}</strong><p>{record.date} • {record.location} • {record.mechanic}</p><p className="muted">{record.details}</p></div><span className={`source-badge ${record.verified ? 'service' : 'neutral'}`}>{record.verified ? 'Подтверждено' : 'Черновик'}</span></div>)}</div></article></section>}
         {state.role === 'owner' && activeTab === 'assistant' && <section className="grid" ref={assistantRef}><article className="panel panel-wide assistant-panel"><div className="assistant-log">{assistantLog.map((message, index) => <p key={`${message}-${index}`}>{message}</p>)}</div><div className="assistant-input"><input value={assistantInput} onChange={(event) => setAssistantInput(event.target.value)} placeholder="Введите запрос" /><button className="primary-button" onClick={() => { if (!assistantInput.trim()) return; setAssistantLog((current) => [...current, `Вы: ${assistantInput}`, `AI: ${assistantReply(assistantInput, state)}`]); setAssistantInput(''); }}>Отправить</button></div></article></section>}
 
         {state.role === 'mechanic' && activeTab === 'overview' && <section className="grid"><article className="panel panel-wide"><div className="timeline">{state.mechanicTasks.map((task) => <div className="timeline-item" key={task.id}><div><strong>{task.title}</strong><p>{task.carLabel} • {task.ownerName}</p><p className="muted">{task.bay} • {task.scheduledAt}</p></div><button className="ghost-button compact" onClick={() => setState((current) => ({ ...current, mechanicTasks: current.mechanicTasks.map((item) => item.id === task.id ? { ...item, status: 'done' } : item) }))}>Готово</button></div>)}</div></article></section>}
-        {state.role === 'mechanic' && activeTab === 'parts' && <section className="grid"><article className="panel panel-wide"><div className="parts-grid">{state.parts.map(renderPartCard)}</div></article><article className="panel"><div className="panel-heading"><div><h2>Добавить деталь</h2><p className="muted">Будет отмечена зеленой галочкой как работа СТО.</p></div><Plus size={20} /></div><div className="cloud-card"><div className="assistant-input"><input value={servicePartDraft.name} onChange={(event) => setServicePartDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Название" /></div><div className="assistant-input"><input value={servicePartDraft.oem} onChange={(event) => setServicePartDraft((current) => ({ ...current, oem: event.target.value }))} placeholder="OEM" /></div><div className="assistant-input"><input value={servicePartDraft.manufacturer} onChange={(event) => setServicePartDraft((current) => ({ ...current, manufacturer: event.target.value }))} placeholder="Производитель" /></div><div className="assistant-input"><input value={servicePartDraft.price} onChange={(event) => setServicePartDraft((current) => ({ ...current, price: event.target.value }))} placeholder="Цена" /></div><div className="assistant-input"><input value={servicePartDraft.note} onChange={(event) => setServicePartDraft((current) => ({ ...current, note: event.target.value }))} placeholder="Заметка" /></div><button className="primary-button" onClick={() => addPart('service')}>Добавить</button></div></article></section>}
+        {state.role === 'mechanic' && activeTab === 'parts' && <section className="grid"><article className="panel panel-wide"><div className="panel-heading"><div><h2>Добавить деталь</h2><p className="muted">Будет отмечена зеленой галочкой как работа СТО.</p></div><Plus size={20} /></div><div className="cloud-card"><div className="assistant-input"><input value={servicePartDraft.name} onChange={(event) => setServicePartDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Название" /></div><div className="assistant-input"><input value={servicePartDraft.oem} onChange={(event) => setServicePartDraft((current) => ({ ...current, oem: event.target.value }))} placeholder="OEM" /></div><div className="assistant-input"><input value={servicePartDraft.manufacturer} onChange={(event) => setServicePartDraft((current) => ({ ...current, manufacturer: event.target.value }))} placeholder="Производитель" /></div><div className="assistant-input"><input value={servicePartDraft.price} onChange={(event) => setServicePartDraft((current) => ({ ...current, price: event.target.value }))} placeholder="Цена" /></div><div className="assistant-input"><input value={servicePartDraft.note} onChange={(event) => setServicePartDraft((current) => ({ ...current, note: event.target.value }))} placeholder="Заметка" /></div><button className="primary-button" onClick={() => addPart('service')}>Добавить</button></div></article><article className="panel panel-wide"><div className="parts-grid">{state.parts.map(renderPartCard)}</div></article></section>}
         {state.role === 'mechanic' && activeTab === 'maintenance' && <section className="grid"><article className="panel"><div className="panel-heading"><div><h2>Добавить по owner-коду</h2><p className="muted">Быстро принять машину в работу или создать запись.</p></div><BadgeCheck size={22} /></div><div className="cloud-card"><div className="assistant-input"><input value={clientLookupCode} onChange={(event) => setClientLookupCode(event.target.value.toUpperCase())} placeholder="Например CC-7M4K2P" /></div><button className="primary-button" onClick={addClientByOwnerCode}>Добавить в очередь</button></div></article>{state.serviceQueue.map((item) => <article className="panel" key={item.id}><strong>{item.workType}</strong><p>{item.customer} • {item.carLabel}</p><p className="muted">{item.scheduledAt}</p><span className="source-badge neutral">{item.ownerCode}</span></article>)}</section>}
         {state.role === 'mechanic' && activeTab === 'history' && <section className="grid"><article className="panel panel-wide"><div className="timeline">{state.recentJobs.map((job) => <div className="timeline-item" key={job.id}><div><strong>{job.title}</strong><p>{job.carLabel}</p><p className="muted">{job.finishedAt}</p></div><span className={`source-badge ${job.verified ? 'service' : 'neutral'}`}>{job.verified ? 'Подтверждено' : 'Ждет подтверждения'}</span></div>)}</div></article></section>}
         {state.role === 'mechanic' && activeTab === 'assistant' && <section className="grid" ref={assistantRef}><article className="panel panel-wide assistant-panel"><div className="assistant-log">{assistantLog.map((message, index) => <p key={`${message}-${index}`}>{message}</p>)}</div><div className="assistant-input"><input value={assistantInput} onChange={(event) => setAssistantInput(event.target.value)} placeholder="Рабочая заметка" /><button className="primary-button" onClick={() => { if (!assistantInput.trim()) return; setAssistantLog((current) => [...current, `Вы: ${assistantInput}`, `AI: ${assistantReply(assistantInput, state)}`]); setAssistantInput(''); }}>Сохранить</button></div></article></section>}

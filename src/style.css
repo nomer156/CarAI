@@ -756,6 +756,11 @@ h2 {
   color: var(--success);
 }
 
+.source-badge.warning {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
 .source-badge.neutral {
   background: var(--secondary-soft);
   color: var(--secondary);

@@ -696,3 +696,23 @@ export async function addVehicleToServiceIntake(input: {
 
   return data;
 }
+
+export async function updateServiceQueueStatus(input: {
+  queueId: string;
+  status: 'new' | 'confirmed' | 'in_service' | 'ready';
+}) {
+  if (!supabase || !isSupabaseEnabled) {
+    throw new Error('Supabase is not configured.');
+  }
+
+  const { data, error } = await supabase.rpc('update_service_queue_status', {
+    target_queue_id: input.queueId,
+    next_status: input.status,
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
+}

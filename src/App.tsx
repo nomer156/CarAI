@@ -152,6 +152,7 @@ function App() {
   const selectedBrandOption = vehicleBrandOptions.find((item) => item.brand === state.vehicle.brand) ?? vehicleBrandOptions[0];
   const tabs = state.role === 'owner' ? ownerTabs : state.role === 'mechanic' ? mechanicTabs : adminTabs;
   const showOnboarding = isAuthReady && Boolean(session) && !hasCloudProfile;
+  const allowRoleSwitchInSettings = !session;
   const currentDisplayName = hasCloudProfile
     ? state.role === 'owner'
       ? state.ownerName
@@ -629,7 +630,7 @@ function App() {
         </div>
       </div>
 
-      {isSettingsOpen && <section className="settings-panel"><div className="panel-heading"><div><h2>Настройки</h2><p className="muted">Тема, демо-роли, цвет машины и сброс данных.</p></div><Cog size={22} /></div><div className="settings-grid"><div><span className="settings-label">Режим</span><div className="segmented"><button className={state.role === 'owner' ? 'active' : ''} onClick={() => switchRole('owner')}>Владелец</button><button className={state.role === 'mechanic' ? 'active' : ''} onClick={() => switchRole('mechanic')}>Механик</button><button className={state.role === 'service_admin' ? 'active' : ''} onClick={() => switchRole('service_admin')}>Админ СТО</button><button className={state.role === 'company_admin' ? 'active' : ''} onClick={() => switchRole('company_admin')}>Модератор</button></div></div><div><span className="settings-label">Цвет машины</span><div className="color-picker">{availableCarColors.map((color) => <button key={color} className={state.vehicle.color === color ? 'color-swatch active' : 'color-swatch'} onClick={() => setState((current) => ({ ...current, vehicle: { ...current.vehicle, color } }))}>{color}</button>)}</div></div></div><div className="settings-footer">{session ? <button className="danger-button" onClick={logout}><LogIn size={16} />Выйти</button> : null}<button className="danger-button" onClick={deleteAccount}><Trash2 size={16} />Удалить аккаунт и данные</button></div></section>}
+      {isSettingsOpen && <section className="settings-panel"><div className="panel-heading"><div><h2>Настройки</h2><p className="muted">Тема, цвет машины и управление аккаунтом.</p></div><Cog size={22} /></div><div className="settings-grid">{allowRoleSwitchInSettings ? <div><span className="settings-label">Режим</span><div className="segmented"><button className={state.role === 'owner' ? 'active' : ''} onClick={() => switchRole('owner')}>Владелец</button><button className={state.role === 'mechanic' ? 'active' : ''} onClick={() => switchRole('mechanic')}>Механик</button><button className={state.role === 'service_admin' ? 'active' : ''} onClick={() => switchRole('service_admin')}>Админ СТО</button><button className={state.role === 'company_admin' ? 'active' : ''} onClick={() => switchRole('company_admin')}>Модератор</button></div></div> : <div><span className="settings-label">Аккаунт</span><div className="owner-code-card"><strong>{roleLabel}</strong><p className="muted">{currentDisplayName}</p></div></div>}<div><span className="settings-label">Цвет машины</span><div className="color-picker">{availableCarColors.map((color) => <button key={color} className={state.vehicle.color === color ? 'color-swatch active' : 'color-swatch'} onClick={() => setState((current) => ({ ...current, vehicle: { ...current.vehicle, color } }))}>{color}</button>)}</div></div></div><div className="settings-footer">{session ? <button className="danger-button" onClick={logout}><LogIn size={16} />Выйти</button> : null}<button className="danger-button" onClick={deleteAccount}><Trash2 size={16} />Удалить аккаунт и данные</button></div></section>}
 
       {showOnboarding ? (
         <section className="onboarding-screen">
@@ -642,6 +643,15 @@ function App() {
               <BadgeCheck size={22} />
             </div>
             <div className="cloud-card">
+              <div>
+                <span className="settings-label">Выберите роль</span>
+                <div className="segmented role-segmented">
+                  <button className={state.role === 'owner' ? 'active' : ''} onClick={() => switchRole('owner')}>Владелец</button>
+                  <button className={state.role === 'mechanic' ? 'active' : ''} onClick={() => switchRole('mechanic')}>Механик</button>
+                  <button className={state.role === 'service_admin' ? 'active' : ''} onClick={() => switchRole('service_admin')}>Админ СТО</button>
+                  <button className={state.role === 'company_admin' ? 'active' : ''} onClick={() => switchRole('company_admin')}>Модератор</button>
+                </div>
+              </div>
               <div className="assistant-input"><input value={profileName} onChange={(event) => setProfileName(event.target.value)} placeholder={state.role === 'mechanic' ? 'Имя механика' : state.role === 'owner' ? 'Имя владельца' : state.role === 'service_admin' ? 'Имя админа СТО' : 'Имя модератора'} /></div>
               {state.role === 'owner' && (
                 <>

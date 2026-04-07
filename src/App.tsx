@@ -50,6 +50,17 @@ function emptyPartDraft(): PartDraft {
   return { name: '', oem: '', manufacturer: '', price: '', note: '' };
 }
 
+function generateStableVin(seed: string) {
+  const alphabet = 'ABCDEFGHJKLMNPRSTUVWXYZ0123456789';
+  const compact = seed.replace(/[^A-Za-z0-9]/g, '').toUpperCase() || 'CODEXCARSEED';
+  let result = 'ZZZ';
+  for (let index = 0; result.length < 17; index += 1) {
+    const sourceCode = compact.charCodeAt(index % compact.length);
+    result += alphabet[sourceCode % alphabet.length];
+  }
+  return result.slice(0, 17);
+}
+
 function App() {
   const [state, setState] = useState<GarageState>(demoState);
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
@@ -58,6 +69,8 @@ function App() {
     return saved === 'dark' || saved === 'light' ? saved : 'light';
   });
   const [session, setSession] = useState<Session | null>(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [syncStatus, setSyncStatus] = useState(isSupabaseEnabled ? 'Готово к входу через Google.' : 'Демо-режим');
   const [hasCloudProfile, setHasCloudProfile] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -100,13 +113,15 @@ function App() {
     if (!isSupabaseEnabled) return;
     getCurrentSession().then(async (next) => {
       setSession(next);
-      if (!next) return;
+      if (!next) { setIsAuthReady(true); return; }
       const cloudState = await loadGarageStateFromCloud();
       if (cloudState) { setState(cloudState); setHasCloudProfile(true); setSyncStatus('Профиль загружен из облака.'); }
+      setIsAuthReady(true);
     }).catch((error: Error) => setSyncStatus(error.message));
     return subscribeToAuthChanges((next) => {
       setSession(next);
-      if (!next?.user?.email) { setHasCloudProfile(false); setSyncStatus('Вы не вошли.'); return; }
+      if (!next?.user?.email) { setHasCloudProfile(false); setSyncStatus('Вы не вошли.'); setIsAuthReady(true); return; }
+      setIsAuthReady(true);
       setSyncStatus(`Вы вошли как ${next.user.email}.`);
       void loadGarageStateFromCloud().then((cloudState) => {
         if (cloudState) { setState(cloudState); setHasCloudProfile(true); }
@@ -118,7 +133,14 @@ function App() {
   const carVisual = resolveCarVisual(state.vehicle.brand);
   const selectedBrandOption = vehicleBrandOptions.find((item) => item.brand === state.vehicle.brand) ?? vehicleBrandOptions[0];
   const tabs = state.role === 'owner' ? ownerTabs : state.role === 'mechanic' ? mechanicTabs : adminTabs;
-  const showOnboarding = Boolean(session) && !hasCloudProfile;
+  const showOnboarding = isAuthReady && Boolean(session) && !hasCloudProfile;
+  const currentDisplayName = hasCloudProfile
+    ? state.role === 'owner'
+      ? state.ownerName
+      : state.role === 'mechanic'
+        ? state.mechanicName
+        : profileName
+    : session?.user?.user_metadata?.full_name ?? profileName;
   const tabLabels =
     state.role === 'service_admin'
       ? { overview: 'СТО', parts: 'Детали', maintenance: 'Клиенты', history: 'Логи', assistant: 'Заметки' }
@@ -278,25 +300,29 @@ function App() {
     }
     try { setSyncStatus('Переходим на вход через Google...'); await signInWithGoogle(); } catch (error) { setSyncStatus(error instanceof Error ? error.message : 'Ошибка входа.'); }
   }
-  async function logout() { try { await signOutCloud(); setSession(null); setHasCloudProfile(false); setSyncStatus('Вы вышли.'); } catch (error) { setSyncStatus(error instanceof Error ? error.message : 'Ошибка выхода.'); } }
+  async function logout() { try { await signOutCloud(); setSession(null); setHasCloudProfile(false); setIsSettingsOpen(false); setSyncStatus('Вы вышли.'); } catch (error) { setSyncStatus(error instanceof Error ? error.message : 'Ошибка выхода.'); } }
   async function refreshCloud() { if (!session) return; const cloudState = await loadGarageStateFromCloud(); if (cloudState) { setState(cloudState); setHasCloudProfile(true); setSyncStatus('Данные обновлены.'); } }
   async function finishOnboarding() {
     if (!session) return;
     try {
+      setIsSavingProfile(true);
       if (state.role === 'owner') {
+        const nextVin = state.vehicle.vin && state.vehicle.vin !== demoState.vehicle.vin
+          ? state.vehicle.vin
+          : generateStableVin(session.user.id);
         await saveOwnerProfile({
           profileName,
           brand: state.vehicle.brand,
           model: state.vehicle.model,
           year: state.vehicle.year,
-          vin: state.vehicle.vin,
+          vin: nextVin,
           plate: state.vehicle.plate,
           mileageKm: state.vehicle.mileageKm,
           engine: state.vehicle.engine,
           color: state.vehicle.color,
           nextInspection: state.vehicle.nextInspection,
         });
-        setState((current) => ({ ...current, ownerName: profileName }));
+        setState((current) => ({ ...current, ownerName: profileName, vehicle: { ...current.vehicle, vin: nextVin } }));
       } else if (state.role === 'mechanic') {
         await bootstrapDemoGarage(profileName.trim(), 'mechanic');
         setState((current) => ({ ...current, mechanicName: profileName, approvalStatus: 'pending' }));
@@ -327,6 +353,8 @@ function App() {
       setSyncStatus('Профиль создан.');
     } catch (error) {
       setSyncStatus(error instanceof Error ? error.message : 'Не удалось завершить onboarding.');
+    } finally {
+      setIsSavingProfile(false);
     }
   }
   async function deleteAccount() {
@@ -412,55 +440,57 @@ function App() {
   return (
     <div className="app-shell">
       <div className="topbar">
-        <div className="brand-lockup"><p className="eyebrow">CodexCar</p><strong>{roleLabel}</strong></div>
+        <div className="brand-lockup"><p className="eyebrow">CodexCar</p><strong>{roleLabel}</strong><span className="muted">{currentDisplayName}</span></div>
         <div className="auth-strip">
           <span className={`pill ${session ? 'approved' : 'pending'}`}>{session?.user?.email ?? 'Не вошли'}</span>
-          {session ? <button className="ghost-button compact" onClick={logout}>Выйти</button> : <button className="primary-button compact" onClick={signIn}><LogIn size={16} />Войти / регистрация</button>}
+          {!session ? <button className="primary-button compact" onClick={signIn}><LogIn size={16} />Войти / регистрация</button> : null}
           <button className="theme-toggle" onClick={() => setIsSettingsOpen((current) => !current)}><Cog size={18} /></button>
           <button className="theme-toggle" onClick={() => setThemeMode((current) => current === 'light' ? 'dark' : 'light')}>{themeMode === 'light' ? <Moon size={18} /> : <SunMedium size={18} />}</button>
         </div>
       </div>
 
-      {isSettingsOpen && <section className="settings-panel"><div className="panel-heading"><div><h2>Настройки</h2><p className="muted">Тема, демо-роли, цвет машины и сброс данных.</p></div><Cog size={22} /></div><div className="settings-grid"><div><span className="settings-label">Режим</span><div className="segmented"><button className={state.role === 'owner' ? 'active' : ''} onClick={() => switchRole('owner')}>Владелец</button><button className={state.role === 'mechanic' ? 'active' : ''} onClick={() => switchRole('mechanic')}>Механик</button><button className={state.role === 'service_admin' ? 'active' : ''} onClick={() => switchRole('service_admin')}>Админ СТО</button><button className={state.role === 'company_admin' ? 'active' : ''} onClick={() => switchRole('company_admin')}>Модератор</button></div></div><div><span className="settings-label">Цвет машины</span><div className="color-picker">{availableCarColors.map((color) => <button key={color} className={state.vehicle.color === color ? 'color-swatch active' : 'color-swatch'} onClick={() => setState((current) => ({ ...current, vehicle: { ...current.vehicle, color } }))}>{color}</button>)}</div></div></div><div className="settings-footer"><button className="danger-button" onClick={deleteAccount}><Trash2 size={16} />Удалить аккаунт и данные</button></div></section>}
+      {isSettingsOpen && <section className="settings-panel"><div className="panel-heading"><div><h2>Настройки</h2><p className="muted">Тема, демо-роли, цвет машины и сброс данных.</p></div><Cog size={22} /></div><div className="settings-grid"><div><span className="settings-label">Режим</span><div className="segmented"><button className={state.role === 'owner' ? 'active' : ''} onClick={() => switchRole('owner')}>Владелец</button><button className={state.role === 'mechanic' ? 'active' : ''} onClick={() => switchRole('mechanic')}>Механик</button><button className={state.role === 'service_admin' ? 'active' : ''} onClick={() => switchRole('service_admin')}>Админ СТО</button><button className={state.role === 'company_admin' ? 'active' : ''} onClick={() => switchRole('company_admin')}>Модератор</button></div></div><div><span className="settings-label">Цвет машины</span><div className="color-picker">{availableCarColors.map((color) => <button key={color} className={state.vehicle.color === color ? 'color-swatch active' : 'color-swatch'} onClick={() => setState((current) => ({ ...current, vehicle: { ...current.vehicle, color } }))}>{color}</button>)}</div></div></div><div className="settings-footer">{session ? <button className="danger-button" onClick={logout}><LogIn size={16} />Выйти</button> : null}<button className="danger-button" onClick={deleteAccount}><Trash2 size={16} />Удалить аккаунт и данные</button></div></section>}
 
+      {showOnboarding ? (
+        <section className="onboarding-screen">
+          <section className="settings-panel onboarding-panel">
+            <div className="panel-heading">
+              <div>
+                <h2>Завершите регистрацию</h2>
+                <p className="muted">Сначала сохраним базовый профиль. Пока он не заполнен, остальные разделы недоступны.</p>
+              </div>
+              <BadgeCheck size={22} />
+            </div>
+            <div className="cloud-card">
+              <div className="assistant-input"><input value={profileName} onChange={(event) => setProfileName(event.target.value)} placeholder={state.role === 'mechanic' ? 'Имя механика' : state.role === 'owner' ? 'Имя владельца' : state.role === 'service_admin' ? 'Имя админа СТО' : 'Имя модератора'} /></div>
+              {state.role === 'owner' && (
+                <>
+                  <div className="assistant-input"><select value={state.vehicle.brand} onChange={(event) => updateVehicleBrand(event.target.value)}>{vehicleBrandOptions.map((option) => <option key={option.brand} value={option.brand}>{option.brand}</option>)}</select></div>
+                  <div className="assistant-input"><select value={state.vehicle.model} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, model: event.target.value } }))}>{selectedBrandOption.models.map((model) => <option key={model} value={model}>{model}</option>)}</select></div>
+                  <div className="assistant-input"><input value={state.vehicle.plate} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, plate: event.target.value } }))} placeholder="Номер авто" /></div>
+                </>
+              )}
+              {(state.role === 'service_admin' || state.role === 'company_admin') && (
+                <>
+                  <div className="assistant-input"><input value={serviceCenterName} onChange={(event) => setServiceCenterName(event.target.value)} placeholder="Название СТО" /></div>
+                  <div className="assistant-input"><input value={serviceCenterCity} onChange={(event) => setServiceCenterCity(event.target.value)} placeholder="Город" /></div>
+                  <div className="assistant-input"><input value={serviceCenterBays} onChange={(event) => setServiceCenterBays(event.target.value)} placeholder="Количество постов" /></div>
+                </>
+              )}
+              <div className="hero-actions">
+                <button className="primary-button" onClick={finishOnboarding} disabled={isSavingProfile}>{isSavingProfile ? 'Сохраняем...' : 'Сохранить профиль'}</button>
+              </div>
+            </div>
+          </section>
+        </section>
+      ) : (
+        <>
       <section className="quick-command"><div className="quick-command-copy"><h2>Быстрое действие</h2><p className="muted">Например: `поменял сегодня масло 5W40`.</p></div><div className="assistant-input quick-command-input"><input value={quickCommand} onChange={(event) => setQuickCommand(event.target.value)} placeholder="Что произошло?" /><button className="primary-button" onClick={applyQuickCommand}>Выполнить</button></div></section>
 
       <header className="hero-card">
         <div className="hero-copy"><h1>{state.role === 'owner' ? 'Машина и обслуживание в одном месте' : state.role === 'mechanic' ? 'Работы и детали в одном кабинете' : 'Команда и сервис без лишнего шума'}</h1><p className="hero-text">{syncStatus}</p><div className="hero-actions"><button className="primary-button" onClick={() => assistantRef.current?.scrollIntoView({ behavior: 'smooth' })}><Sparkles size={18} />Открыть помощника</button><button className="ghost-button" onClick={refreshCloud} disabled={!session}>Обновить</button></div></div>
         <div className="hero-panel">{state.role === 'owner' ? <div className="vehicle-card hero-passport"><button className="passport-toggle" onClick={() => setIsPassportExpanded((current) => !current)}><div className="passport-collapsed"><div className="passport-visual" style={{ backgroundColor: carVisual.accent }}><img src={carVisual.image} alt={`${state.vehicle.brand} showcase`} /></div><div><strong>{state.vehicle.brand} {state.vehicle.model}</strong><p>{state.vehicle.plate}</p></div></div>{isPassportExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}</button>{isPassportExpanded && <div className="vehicle-grid passport-details"><div><span>Owner code</span><strong>{state.vehicle.ownerCode}</strong></div><div><span>VIN</span><strong>{state.vehicle.vin}</strong></div><div><span>Пробег</span><strong>{state.vehicle.mileageKm.toLocaleString('ru-RU')} км</strong></div><div><span>Двигатель</span><strong>{state.vehicle.engine}</strong></div><div><span>Цвет</span><strong>{state.vehicle.color}</strong></div><div><span>Осмотр</span><strong>{state.vehicle.nextInspection}</strong></div></div>}</div> : <div className="vehicle-card"><div className="vehicle-title">{state.role === 'mechanic' ? <Wrench size={20} /> : <Users size={20} />}<strong>{state.serviceCenter.name}</strong></div><p>{state.serviceCenter.city}</p><div className="vehicle-grid"><div><span>Постов</span><strong>{state.serviceCenter.bays}</strong></div><div><span>Ожидают механика</span><strong>{state.staff.filter((item) => item.role === 'mechanic' && item.approvalStatus === 'pending').length}</strong></div></div></div>}</div>
       </header>
-
-      {showOnboarding && (
-        <section className="settings-panel onboarding-panel">
-          <div className="panel-heading">
-            <div>
-              <h2>Завершите регистрацию</h2>
-              <p className="muted">После входа через Google нужно заполнить базовый профиль. После сохранения этот блок исчезнет.</p>
-            </div>
-            <BadgeCheck size={22} />
-          </div>
-          <div className="cloud-card">
-            <div className="assistant-input"><input value={profileName} onChange={(event) => setProfileName(event.target.value)} placeholder={state.role === 'mechanic' ? 'Имя механика' : state.role === 'owner' ? 'Имя владельца' : state.role === 'service_admin' ? 'Имя админа СТО' : 'Имя модератора'} /></div>
-            {state.role === 'owner' && (
-              <>
-                <div className="assistant-input"><select value={state.vehicle.brand} onChange={(event) => updateVehicleBrand(event.target.value)}>{vehicleBrandOptions.map((option) => <option key={option.brand} value={option.brand}>{option.brand}</option>)}</select></div>
-                <div className="assistant-input"><select value={state.vehicle.model} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, model: event.target.value } }))}>{selectedBrandOption.models.map((model) => <option key={model} value={model}>{model}</option>)}</select></div>
-                <div className="assistant-input"><input value={state.vehicle.plate} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, plate: event.target.value } }))} placeholder="Номер авто" /></div>
-              </>
-            )}
-            {(state.role === 'service_admin' || state.role === 'company_admin') && (
-              <>
-                <div className="assistant-input"><input value={serviceCenterName} onChange={(event) => setServiceCenterName(event.target.value)} placeholder="Название СТО" /></div>
-                <div className="assistant-input"><input value={serviceCenterCity} onChange={(event) => setServiceCenterCity(event.target.value)} placeholder="Город" /></div>
-                <div className="assistant-input"><input value={serviceCenterBays} onChange={(event) => setServiceCenterBays(event.target.value)} placeholder="Количество постов" /></div>
-              </>
-            )}
-            <div className="hero-actions">
-              <button className="primary-button" onClick={finishOnboarding}>Сохранить профиль</button>
-            </div>
-          </div>
-        </section>
-      )}
 
       <nav className="tabs tabs-top">{tabs.map((tab) => <button key={tab} className={activeTab === tab ? 'active' : ''} onClick={() => setActiveTab(tab)}>{tabLabels[tab]}</button>)}</nav>
 
@@ -489,6 +519,8 @@ function App() {
       </main>
 
       <nav className="tabs tabs-bottom">{tabs.map((tab) => <button key={tab} className={activeTab === tab ? 'active' : ''} onClick={() => setActiveTab(tab)}>{tabLabels[tab]}</button>)}</nav>
+        </>
+      )}
     </div>
   );
 }

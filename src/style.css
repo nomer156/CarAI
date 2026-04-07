@@ -124,6 +124,10 @@ button {
   font-size: 0.96rem;
 }
 
+.brand-lockup .muted {
+  font-size: 0.9rem;
+}
+
 .topbar-actions {
   display: flex;
   align-items: center;
@@ -817,6 +821,9 @@ h2 {
 
 .settings-footer {
   margin-top: 18px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .owner-code-card {
@@ -839,6 +846,16 @@ h2 {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.onboarding-screen {
+  min-height: calc(100vh - 140px);
+  display: grid;
+  place-items: center;
+}
+
+.onboarding-panel {
+  width: min(760px, 100%);
 }
 
 @media (max-width: 1080px) {
@@ -910,6 +927,10 @@ h2 {
   .theme-toggle {
     width: 100%;
     justify-content: center;
+  }
+
+  .settings-footer .danger-button {
+    width: 100%;
   }
 
   .segmented {

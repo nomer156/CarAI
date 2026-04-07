@@ -17,6 +17,7 @@ export { isSupabaseEnabled } from './supabase';
 
 type CloudVehicleRow = {
   id: string;
+  owner_id: string;
   brand: string;
   model: string;
   model_year: number;
@@ -163,6 +164,17 @@ export async function signOutCloud() {
   if (error) {
     throw error;
   }
+}
+
+function isMissingDeleteRpc(error: unknown) {
+  return Boolean(
+    error
+    && typeof error === 'object'
+    && 'code' in error
+    && 'message' in error
+    && (error as { code?: string }).code === 'PGRST202'
+    && String((error as { message?: string }).message).includes('delete_my_account_data'),
+  );
 }
 
 export async function getCurrentSession() {
@@ -368,7 +380,7 @@ export async function loadGarageStateFromCloud() {
 
   const { data: vehicle, error: vehicleError } = await supabase
     .from('vehicles')
-    .select('id, brand, model, model_year, vin, owner_code, plate, mileage_km, engine, color, next_inspection')
+    .select('id, owner_id, brand, model, model_year, vin, owner_code, plate, mileage_km, engine, color, next_inspection')
     .order('created_at', { ascending: true })
     .limit(1)
     .maybeSingle<CloudVehicleRow>();
@@ -437,7 +449,7 @@ export async function loadGarageStateFromCloud() {
       model: vehicle.model,
       year: vehicle.model_year,
       vin: vehicle.vin,
-      ownerCode: vehicle.owner_code ?? demoState.vehicle.ownerCode,
+      ownerCode: vehicle.owner_id,
       mileageKm: vehicle.mileage_km,
       engine: vehicle.engine ?? 'Не указано',
       plate: vehicle.plate ?? 'Не указан',
@@ -563,6 +575,9 @@ export async function deleteCloudAccountData() {
 
   const { error } = await supabase.rpc('delete_my_account_data');
   if (error) {
+    if (isMissingDeleteRpc(error)) {
+      return;
+    }
     throw error;
   }
 }

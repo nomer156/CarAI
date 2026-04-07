@@ -1,3 +1,24 @@
+alter table public.vehicles
+add column if not exists owner_code text;
+
+update public.vehicles
+set owner_code = owner_id::text
+where owner_code is distinct from owner_id::text;
+
+drop index if exists vehicles_owner_code_uidx;
+create unique index if not exists vehicles_owner_code_uidx on public.vehicles(owner_code);
+
+drop policy if exists "owners and mechanics can read allowed vehicles" on public.vehicles;
+drop policy if exists "owners and mechanics can read access rows" on public.vehicle_access;
+
+create policy "owners can read own vehicles"
+on public.vehicles for select
+using (owner_id = auth.uid());
+
+create policy "users can read own access rows"
+on public.vehicle_access for select
+using (user_id = auth.uid());
+
 create or replace function public.save_owner_profile(
   profile_name text,
   vehicle_brand text,
@@ -92,88 +113,31 @@ $$;
 
 grant execute on function public.save_owner_profile(text, text, text, int, text, text, int, text, text, date) to authenticated;
 
-create or replace function public.save_staff_profile(
-  profile_name text,
-  profile_role text,
-  service_center_name text,
-  service_center_city text,
-  service_center_bays int
-)
-returns uuid
+create or replace function public.delete_my_account_data()
+returns void
 language plpgsql
 security definer
 set search_path = public
 as $$
 declare
   current_user_id uuid := auth.uid();
-  target_service_center_id uuid;
 begin
   if current_user_id is null then
     raise exception 'Not authenticated';
   end if;
 
-  if profile_role not in ('service_admin', 'company_admin') then
-    raise exception 'Invalid role';
-  end if;
+  delete from public.service_center_staff
+  where user_id = current_user_id;
 
-  insert into public.users (id, role, approval_status, approved_at, full_name)
-  values (
-    current_user_id,
-    profile_role,
-    'approved',
-    now(),
-    profile_name
-  )
-  on conflict (id) do update
-    set role = excluded.role,
-        approval_status = 'approved',
-        approved_at = coalesce(public.users.approved_at, now()),
-        full_name = excluded.full_name;
+  delete from public.vehicle_access
+  where user_id = current_user_id;
 
-  if profile_role = 'company_admin' then
-    return current_user_id;
-  end if;
+  delete from public.vehicles
+  where owner_id = current_user_id;
 
-  select id into target_service_center_id
-  from public.service_centers
-  where lower(name) = lower(service_center_name)
-  order by created_at asc
-  limit 1;
-
-  if target_service_center_id is null then
-    insert into public.service_centers (name, city, bays)
-    values (service_center_name, service_center_city, greatest(service_center_bays, 1))
-    returning id into target_service_center_id;
-  else
-    update public.service_centers
-    set name = service_center_name,
-        city = service_center_city,
-        bays = greatest(service_center_bays, 1)
-    where id = target_service_center_id;
-  end if;
-
-  insert into public.service_center_staff (
-    service_center_id,
-    user_id,
-    specialization,
-    shift_label,
-    is_active
-  )
-  select
-    target_service_center_id,
-    current_user_id,
-    'Управление сервисом',
-    '08:00 - 17:00',
-    true
-  where not exists (
-    select 1
-    from public.service_center_staff
-    where user_id = current_user_id
-      and service_center_id = target_service_center_id
-  );
-
-  return target_service_center_id;
+  delete from public.users
+  where id = current_user_id;
 end;
 $$;
 
-grant execute on function public.save_staff_profile(text, text, text, text, int) to authenticated;
+grant execute on function public.delete_my_account_data() to authenticated;

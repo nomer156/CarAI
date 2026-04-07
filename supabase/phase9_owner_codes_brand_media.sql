@@ -2,8 +2,8 @@ alter table public.vehicles
 add column if not exists owner_code text;
 
 update public.vehicles
-set owner_code = 'CC-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 6))
-where owner_code is null;
+set owner_code = owner_id::text
+where owner_code is null or owner_code is distinct from owner_id::text;
 
 create unique index if not exists vehicles_owner_code_uidx on public.vehicles(owner_code);
 
@@ -33,7 +33,6 @@ as $$
 declare
   current_user_id uuid := auth.uid();
   target_vehicle_id uuid;
-  target_owner_code text;
 begin
   if current_user_id is null then
     raise exception 'Not authenticated';
@@ -53,15 +52,11 @@ begin
         approved_at = coalesce(public.users.approved_at, now()),
         full_name = excluded.full_name;
 
-  select id, owner_code into target_vehicle_id, target_owner_code
+  select id into target_vehicle_id
   from public.vehicles
   where owner_id = current_user_id
   order by created_at asc
   limit 1;
-
-  if target_owner_code is null then
-    target_owner_code := 'CC-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 6));
-  end if;
 
   if target_vehicle_id is null then
     insert into public.vehicles (
@@ -83,7 +78,7 @@ begin
       vehicle_model,
       vehicle_year,
       vehicle_vin,
-      target_owner_code,
+      current_user_id::text,
       vehicle_plate,
       vehicle_mileage_km,
       vehicle_engine,
@@ -97,7 +92,7 @@ begin
         model = vehicle_model,
         model_year = vehicle_year,
         vin = vehicle_vin,
-        owner_code = coalesce(public.vehicles.owner_code, target_owner_code),
+        owner_code = current_user_id::text,
         plate = vehicle_plate,
         mileage_km = vehicle_mileage_km,
         engine = vehicle_engine,

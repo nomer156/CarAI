@@ -15,7 +15,7 @@ export const demoState: GarageState = {
     engine: '2.0 дизель, 190 л.с.',
     plate: 'A123BC 77',
     nextInspection: '2026-07-19',
-    color: 'Midnight Blue',
+    color: 'Синий',
   },
   parts: [
     {

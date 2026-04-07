@@ -482,6 +482,38 @@ h2 {
   margin-top: 18px;
 }
 
+.passport-expanded {
+  display: grid;
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.passport-share {
+  display: grid;
+  grid-template-columns: 1.1fr 220px;
+  gap: 16px;
+}
+
+.qr-card {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: var(--panel-strong);
+}
+
+.qr-card img {
+  width: 100%;
+  max-width: 160px;
+  height: auto;
+}
+
+.passport-edit-heading {
+  margin-bottom: 0;
+}
+
 .vehicle-visual img {
   display: block;
   width: 100%;
@@ -863,7 +895,8 @@ h2 {
   .stats-row,
   .grid,
   .settings-grid,
-  .parts-grid {
+  .parts-grid,
+  .passport-share {
     grid-template-columns: 1fr;
   }
 

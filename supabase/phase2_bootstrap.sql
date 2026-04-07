@@ -63,7 +63,7 @@ begin
     '320d Touring',
     2019,
     'WBA8J31040K123456',
-    'CC-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 6)),
+    current_user_id::text,
     'A123BC 77',
     128400,
     '2.0 дизель, 190 л.с.',

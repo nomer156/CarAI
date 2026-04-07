@@ -22,11 +22,15 @@ export const vehicleBrandOptions = [
 ] as const;
 
 export const availableCarColors = [
-  'Midnight Blue',
-  'Pearl White',
-  'Graphite Gray',
-  'Crimson Red',
-  'Forest Green',
+  'Белый',
+  'Черный',
+  'Серый',
+  'Серебристый',
+  'Синий',
+  'Красный',
+  'Зеленый',
+  'Желтый',
+  'Коричневый',
 ];
 
 export function resolveCarVisual(brand: string) {

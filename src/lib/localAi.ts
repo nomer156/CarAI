@@ -8,7 +8,7 @@ export type ParsedMaintenanceNote = {
   source?: 'manual' | 'ai';
 };
 
-const LOCAL_AI_URL = 'http://127.0.0.1:11435';
+const LOCAL_AI_URL = 'http://127.0.0.1:11535';
 
 async function request<T>(path: string, init?: RequestInit, timeoutMs = 12000): Promise<T> {
   const controller = new AbortController();

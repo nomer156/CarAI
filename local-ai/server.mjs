@@ -1,7 +1,7 @@
 import http from 'node:http';
 
 const HOST = '127.0.0.1';
-const PORT = 11435;
+const PORT = 11535;
 const OLLAMA_URL = 'http://127.0.0.1:11434/api/chat';
 const MODEL = process.env.OLLAMA_MODEL || 'qwen2.5:7b-instruct';
 

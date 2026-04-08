@@ -59,6 +59,10 @@ function maintenanceProgress(task: MaintenanceTask, mileageKm: number) {
   return Math.min(Math.max((traveled / task.intervalKm) * 100, 0), 100);
 }
 
+function remainingMileage(task: MaintenanceTask, mileageKm: number) {
+  return Math.max(task.dueAtKm - mileageKm, 0);
+}
+
 function assistantReply(message: string, state: GarageState) {
   const text = message.toLowerCase();
   if (text.includes('масло') || text.includes('то')) return `Ближайшее ТО: ${state.maintenance[0].title}.`;
@@ -216,6 +220,7 @@ function App() {
   const tabs = state.role === 'owner' ? ownerTabs : state.role === 'mechanic' ? mechanicTabs : adminTabs;
   const showOnboarding = isAuthReady && Boolean(session) && !hasCloudProfile;
   const allowRoleSwitchInSettings = !session;
+  const showHeroCard = state.role !== 'owner' || activeTab === 'overview';
   const currentDisplayName = hasCloudProfile
     ? state.role === 'owner'
       ? state.ownerName
@@ -231,6 +236,27 @@ function App() {
       : state.role === 'company_admin'
         ? { overview: 'Компании', parts: 'Детали', maintenance: 'Люди', history: 'Логи', assistant: 'Заметки' }
         : defaultTabLabels;
+  const ownerSectionMeta: Partial<Record<TabKey, { title: string; text: string }>> = {
+    parts: {
+      title: 'Детали и OEM',
+      text: 'Собирайте свои расходники, OEM-номера и заметки по замене без лишних полей.',
+    },
+    maintenance: {
+      title: 'Регламент ТО',
+      text: 'Здесь только понятный план обслуживания по пробегу: что делать, когда и что именно входит в каждое ТО.',
+    },
+    history: {
+      title: 'Сервисная история',
+      text: 'Хронология работ, подтвержденных сервисом, без кнопок-заглушек и лишнего шума.',
+    },
+    assistant: {
+      title: 'Локальный ИИ',
+      text: 'ИИ остается дополнительным ускорителем. Основная работа с машиной доступна и без него.',
+    },
+  };
+  const nearestMaintenance = [...state.maintenance].sort((left, right) => left.dueAtKm - right.dueAtKm)[0];
+  const verifiedRecords = state.records.filter((record) => record.verified).length;
+  const latestRecord = [...state.records].sort((left, right) => right.date.localeCompare(left.date))[0];
 
   useEffect(() => {
     if (!showOnboarding && state.role === 'owner') {
@@ -1021,21 +1047,28 @@ function App() {
         <>
       {state.role !== 'owner' && <section className="quick-command"><div className="quick-command-copy"><h2>Быстрое действие</h2><p className="muted">Например: `поменял сегодня масло 5W40`.</p></div><div className="assistant-input quick-command-input"><input value={quickCommand} onChange={(event) => setQuickCommand(event.target.value)} placeholder="Что произошло?" /><button className="primary-button" onClick={applyQuickCommand}>Выполнить</button></div></section>}
 
-      <header className="hero-card">
+      {showHeroCard ? <header className="hero-card">
         <div className="hero-copy"><h1>{state.role === 'owner' ? 'Машина и обслуживание в одном месте' : state.role === 'mechanic' ? 'Работы и детали в одном кабинете' : 'Команда и сервис без лишнего шума'}</h1><p className="hero-text">{syncStatus}</p><div className="hero-actions"><button className="primary-button" onClick={() => assistantRef.current?.scrollIntoView({ behavior: 'smooth' })}><Sparkles size={18} />Открыть помощника</button><button className="ghost-button" onClick={refreshCloud} disabled={!session}>Обновить</button></div></div>
         <div className="hero-panel">{state.role === 'owner' ? <div className="vehicle-card hero-passport"><button className="passport-toggle" onClick={() => setIsPassportExpanded((current) => !current)}><div className="passport-collapsed"><div className="passport-visual" style={{ backgroundColor: carVisual.accent }}><img src={carVisual.image} alt={`${state.vehicle.brand} showcase`} /></div><div><strong>{state.vehicle.brand} {state.vehicle.model}</strong><p>{state.vehicle.plate}</p></div></div>{isPassportExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}</button>{isPassportExpanded && <div className="passport-expanded"><div className="vehicle-grid passport-details"><div><span>ID владельца</span><strong>{state.vehicle.ownerCode}</strong></div><div><span>VIN</span><strong>{state.vehicle.vin}</strong></div><div><span>Пробег</span><strong>{state.vehicle.mileageKm.toLocaleString('ru-RU')} км</strong></div><div><span>Двигатель</span><strong>{state.vehicle.engine}</strong></div><div><span>Цвет</span><strong>{state.vehicle.color}</strong></div><div><span>Осмотр</span><strong>{state.vehicle.nextInspection}</strong></div></div><div className="passport-share"><div className="owner-code-card"><strong>{state.vehicle.ownerCode}</strong><p className="muted">Этот ID можно вводить вручную или считывать по QR.</p></div>{ownerQrCode ? <div className="qr-card"><img src={ownerQrCode} alt="QR владельца" /><p className="muted">QR с ID владельца</p></div> : null}</div><div className="panel-heading passport-edit-heading"><div><h2>Сведения об авто</h2><p className="muted">Редактирование собрано прямо внутри карточки автомобиля.</p></div><button className="ghost-button compact" onClick={() => setIsVehicleEditorOpen((current) => !current)}><Pencil size={14} />{isVehicleEditorOpen ? 'Свернуть' : 'Изменить'}</button></div>{isVehicleEditorOpen && <div className="cloud-card"><div className="assistant-input"><input value={profileName} onChange={(event) => setProfileName(event.target.value)} placeholder="Имя владельца" /></div><div className="assistant-input"><select value={state.vehicle.brand} onChange={(event) => updateVehicleBrand(event.target.value)}>{vehicleBrandOptions.map((option) => <option key={option.brand} value={option.brand}>{option.brand}</option>)}</select></div><div className="assistant-input"><select value={state.vehicle.model} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, model: event.target.value } }))}>{selectedBrandOption.models.map((model) => <option key={model} value={model}>{model}</option>)}</select></div><div className="assistant-input"><input value={state.vehicle.plate} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, plate: event.target.value } }))} placeholder="Номер" /></div><div className="assistant-input"><input value={state.vehicle.vin} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, vin: event.target.value.toUpperCase() } }))} placeholder="VIN" /></div><div className="assistant-input"><input value={String(state.vehicle.mileageKm)} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, mileageKm: Number.parseInt(event.target.value, 10) || 0 } }))} placeholder="Пробег" /></div><div className="assistant-input"><input value={state.vehicle.engine} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, engine: event.target.value } }))} placeholder="Двигатель" /></div><button className="primary-button" onClick={() => { setState((current) => ({ ...current, ownerName: profileName })); setSyncStatus('Изменения автомобиля сохранены локально.'); setIsVehicleEditorOpen(false); }}>Сохранить сведения</button></div>}</div>}</div> : <div className="vehicle-card"><div className="vehicle-title">{state.role === 'mechanic' ? <Wrench size={20} /> : <Users size={20} />}<strong>{state.serviceCenter.name}</strong></div><p>{state.serviceCenter.city}</p><div className="vehicle-grid"><div><span>Постов</span><strong>{state.serviceCenter.bays}</strong></div><div><span>Ожидают механика</span><strong>{state.staff.filter((item) => item.role === 'mechanic' && item.approvalStatus === 'pending').length}</strong></div></div></div>}</div>
-      </header>
+      </header> : null}
 
       <nav className="tabs tabs-top">{tabs.map((tab) => <button key={tab} className={activeTab === tab ? 'active' : ''} onClick={() => setActiveTab(tab)}>{tabLabels[tab]}</button>)}</nav>
 
       <main className="dashboard">
+        {state.role === 'owner' && activeTab !== 'overview' && ownerSectionMeta[activeTab] ? (
+          <section className="owner-context-card">
+            <p className="eyebrow">CodexCar</p>
+            <h2>{ownerSectionMeta[activeTab]?.title}</h2>
+            <p className="muted">{ownerSectionMeta[activeTab]?.text}</p>
+          </section>
+        ) : null}
         {state.role === 'owner' && activeTab === 'overview' && (
           <section className="grid">
             <article className="panel panel-wide">
               <div className="panel-heading">
                 <div>
                   <h2>Быстрая запись</h2>
-                  <p className="muted">Одна строка, минимум тапов, потом локальный ИИ сам разберет заметку.</p>
+                  <p className="muted">Одна строка, минимум тапов. ИИ может помочь позже, но запись уже сейчас полностью работает сама по себе.</p>
                 </div>
                 <div className="owner-overview-actions">
                   <div className="assistant-input car-selector">
@@ -1100,8 +1133,8 @@ function App() {
           </section>
         )}
         {state.role === 'owner' && activeTab === 'parts' && <section className="grid"><article className="panel panel-wide"><div className="panel-heading"><div><h2>Добавить деталь</h2><p className="muted">Получит желтую галочку: менял сам.</p></div><Plus size={20} /></div><div className="cloud-card"><div className="assistant-input"><input value={ownerPartDraft.name} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Название" /></div><div className="assistant-input"><input value={ownerPartDraft.oem} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, oem: event.target.value }))} placeholder="OEM" /></div><div className="assistant-input"><input value={ownerPartDraft.manufacturer} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, manufacturer: event.target.value }))} placeholder="Производитель" /></div><div className="assistant-input"><input value={ownerPartDraft.price} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, price: event.target.value }))} placeholder="Цена" /></div><div className="assistant-input"><input value={ownerPartDraft.note} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, note: event.target.value }))} placeholder="Заметка" /></div><button className="primary-button" onClick={() => addPart('self')}>Добавить</button></div></article><article className="panel panel-wide"><div className="parts-grid">{state.parts.length ? state.parts.map(renderPartCard) : <EmptyState title="Деталей пока нет" text="Добавьте первую деталь выше, чтобы сохранить OEM, производителя и заметку по замене." />}</div></article></section>}
-        {state.role === 'owner' && activeTab === 'maintenance' && <section className="grid"><article className="panel panel-wide maintenance-stack">{state.maintenance.length ? state.maintenance.map((task) => <article className="maintenance-card" key={task.id}><button className="maintenance-toggle" onClick={() => setExpandedMaintenanceId((current) => current === task.id ? null : task.id)}><div><strong>{task.title}</strong><p className="muted">{task.dueAtKm.toLocaleString('ru-RU')} км</p></div>{expandedMaintenanceId === task.id ? <ChevronUp size={18} /> : <ChevronDown size={18} />}</button><div className="progress-track"><div className="progress-bar" style={{ width: `${maintenanceProgress(task, state.vehicle.mileageKm)}%` }} /></div>{expandedMaintenanceId === task.id && <div className="maintenance-details"><ul className="stack-list">{task.items.map((item) => <li key={item}>{item}</li>)}</ul><p className="muted">{task.notes}</p></div>}</article>) : <EmptyState title="ТО пока не заполнено" text="После первой записи обслуживания здесь появятся регламентные работы и интервалы пробега." />}</article></section>}
-        {state.role === 'owner' && activeTab === 'history' && <section className="grid"><article className="panel panel-wide"><div className="timeline">{state.records.length ? state.records.map((record) => <div className="timeline-item" key={record.id}><div><strong>{record.title}</strong><p>{record.date} • {record.location} • {record.mechanic}</p><p className="muted">{record.details}</p></div><span className={`source-badge ${record.verified ? 'service' : 'neutral'}`}>{record.verified ? 'Подтверждено' : 'Черновик'}</span></div>) : <EmptyState title="История обслуживания пуста" text="Когда вы или сервис добавите первую работу, она появится в этом разделе." />}</div></article></section>}
+        {state.role === 'owner' && activeTab === 'maintenance' && <section className="grid"><article className="panel"><div className="panel-heading"><div><h2>Что ближайшее</h2><p className="muted">Раздел только для просмотра: здесь собран понятный регламент без ручного добавления ТО.</p></div><BadgeCheck size={22} /></div><div className="maintenance-summary-grid"><div className="feature"><div><strong>{nearestMaintenance?.title ?? 'ТО не найдено'}</strong><p className="muted">Следующий обязательный визит</p></div><strong>{nearestMaintenance ? `${remainingMileage(nearestMaintenance, state.vehicle.mileageKm).toLocaleString('ru-RU')} км` : '—'}</strong></div><div className="feature"><div><strong>{state.vehicle.mileageKm.toLocaleString('ru-RU')} км</strong><p className="muted">Текущий пробег автомобиля</p></div><strong>{state.vehicle.nextInspection}</strong></div><div className="feature"><div><strong>{state.maintenance.length}</strong><p className="muted">Регламентных этапов уже подготовлено</p></div><strong>{verifiedRecords} записи СТО</strong></div></div></article><article className="panel panel-wide maintenance-stack">{state.maintenance.length ? [...state.maintenance].sort((left, right) => left.dueAtKm - right.dueAtKm).map((task) => <article className="maintenance-card" key={task.id}><button className="maintenance-toggle" onClick={() => setExpandedMaintenanceId((current) => current === task.id ? null : task.id)}><div><span className="maintenance-kicker">{task.title}</span><strong>{task.title} · {task.intervalKm.toLocaleString('ru-RU')} км</strong><p className="muted">Следующее выполнение до {task.dueAtKm.toLocaleString('ru-RU')} км</p></div>{expandedMaintenanceId === task.id ? <ChevronUp size={18} /> : <ChevronDown size={18} />}</button><div className="maintenance-meta-grid"><div><span>Осталось</span><strong>{remainingMileage(task, state.vehicle.mileageKm).toLocaleString('ru-RU')} км</strong></div><div><span>Последний раз</span><strong>{task.lastDoneKm.toLocaleString('ru-RU')} км</strong></div><div><span>Приоритет</span><strong>{task.priority === 'high' ? 'Высокий' : task.priority === 'medium' ? 'Средний' : 'Плановый'}</strong></div></div><div className="progress-track"><div className="progress-bar" style={{ width: `${maintenanceProgress(task, state.vehicle.mileageKm)}%` }} /></div>{expandedMaintenanceId === task.id && <div className="maintenance-details"><ul className="stack-list">{task.items.map((item) => <li key={item}>{item}</li>)}</ul><p className="muted">{task.notes}</p></div>}</article>) : <EmptyState title="ТО пока не заполнено" text="После первой записи обслуживания здесь появятся регламентные работы и интервалы пробега." />}</article></section>}
+        {state.role === 'owner' && activeTab === 'history' && <section className="grid"><article className="panel"><div className="panel-heading"><div><h2>Сервисная сводка</h2><p className="muted">Только фактические визиты и подтвержденные работы без лишних кнопок.</p></div><Wrench size={22} /></div><div className="service-summary-grid"><div className="feature"><div><strong>{verifiedRecords}</strong><p className="muted">Подтвержденных работ</p></div></div><div className="feature"><div><strong>{latestRecord?.date ?? '—'}</strong><p className="muted">Последний визит в сервис</p></div></div><div className="feature"><div><strong>{latestRecord?.location ?? 'СТО не указано'}</strong><p className="muted">Последнее место обслуживания</p></div></div></div></article><article className="panel panel-wide"><div className="panel-heading"><div><h2>История обслуживания</h2><p className="muted">Каждая запись показывает дату, сервис, исполнителя и краткий итог работ.</p></div><BadgeCheck size={22} /></div><div className="service-history-stack">{state.records.length ? state.records.map((record) => <article className="service-history-card" key={record.id}><div className="service-history-head"><div><strong>{record.title}</strong><p>{record.date} • {record.location}</p></div><span className={`source-badge ${record.verified ? 'service' : 'neutral'}`}>{record.verified ? 'Подтверждено' : 'Черновик'}</span></div><div className="service-history-meta"><span>Мастер: {record.mechanic}</span><span>Авто: {state.vehicle.brand} {state.vehicle.model}</span></div><p className="muted">{record.details}</p></article>) : <EmptyState title="История обслуживания пуста" text="Когда вы или сервис добавите первую работу, она появится в этом разделе." />}</div></article></section>}
         {state.role === 'owner' && activeTab === 'assistant' && (
           <section className="grid" ref={assistantRef}>
             <article className="panel">
@@ -1151,7 +1184,7 @@ function App() {
         {state.role === 'company_admin' && activeTab === 'assistant' && <section className="grid" ref={assistantRef}><article className="panel panel-wide assistant-panel"><div className="assistant-log">{assistantLog.map((message, index) => <p key={`${message}-${index}`}>{message}</p>)}</div><div className="assistant-input"><input value={assistantInput} onChange={(event) => setAssistantInput(event.target.value)} placeholder="Заметка модератора" /><button className="primary-button" onClick={() => { if (!assistantInput.trim()) return; setAssistantLog((current) => [...current, `Вы: ${assistantInput}`, `AI: ${assistantReply(assistantInput, state)}`]); setAssistantInput(''); }}>Сохранить</button></div></article></section>}
       </main>
 
-      {state.role === 'owner' && !showOnboarding ? (
+      {state.role === 'owner' && !showOnboarding && activeTab === 'overview' ? (
         <button
           className="fab-add"
           onClick={() => {

@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "ai:server": "node local-ai/server.mjs"
   },
   "devDependencies": {
     "@types/qrcode": "^1.5.6",

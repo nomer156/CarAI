@@ -14,6 +14,28 @@ export type VehicleProfile = {
   color: string;
 };
 
+export type Car = {
+  id: string;
+  name: string;
+  brand?: string;
+  model?: string;
+};
+
+export type JournalRecord = {
+  id: string;
+  carId: string;
+  createdAt: number;
+  mileage?: number;
+  note: string;
+  category?: string;
+  partName?: string;
+  rating?: 'good' | 'bad';
+  cost?: number;
+  nextMileage?: number;
+  rawNote?: string;
+  source?: 'manual' | 'ai';
+};
+
 export type Part = {
   id: string;
   name: string;
@@ -170,6 +192,9 @@ export type GarageState = {
   approvalStatus: ApprovalStatus;
   ownerName: string;
   mechanicName: string;
+  cars: Car[];
+  activeCarId: string;
+  journal: JournalRecord[];
   vehicle: VehicleProfile;
   parts: Part[];
   maintenance: MaintenanceTask[];

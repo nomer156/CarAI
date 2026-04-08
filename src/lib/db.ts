@@ -22,10 +22,24 @@ async function getDatabase() {
   });
 }
 
+function normalizeGarageState(state: GarageState | undefined): GarageState {
+  if (!state) {
+    return demoState;
+  }
+
+  return {
+    ...demoState,
+    ...state,
+    cars: state.cars?.length ? state.cars : demoState.cars,
+    activeCarId: state.activeCarId ?? state.cars?.[0]?.id ?? demoState.activeCarId,
+    journal: state.journal ?? demoState.journal,
+  };
+}
+
 export async function loadGarageState() {
   const db = await getDatabase();
   const state = await db.get(STORE_NAME, STATE_KEY);
-  return state ?? demoState;
+  return normalizeGarageState(state);
 }
 
 export async function saveGarageState(state: GarageState) {

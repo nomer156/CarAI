@@ -894,6 +894,114 @@ h2 {
   letter-spacing: 0.08em;
 }
 
+.owner-overview-actions,
+.journal-meta,
+.journal-details,
+.journal-footer,
+.journal-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.car-selector {
+  min-width: 220px;
+}
+
+.quick-entry-shell {
+  display: grid;
+  gap: 12px;
+}
+
+.quick-entry-primary {
+  align-items: stretch;
+}
+
+.big-add-button {
+  min-width: 160px;
+}
+
+.inline-toggle {
+  width: fit-content;
+}
+
+.quick-entry-optional {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.rating-segmented {
+  width: 100%;
+}
+
+.rating-segmented button {
+  flex: 1;
+}
+
+.owner-journal-meta {
+  display: grid;
+  gap: 6px;
+}
+
+.journal-timeline {
+  gap: 12px;
+}
+
+.journal-card {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: var(--panel-strong);
+}
+
+.journal-card.swiped {
+  border-color: rgba(203, 90, 96, 0.3);
+  box-shadow: 0 0 0 1px rgba(203, 90, 96, 0.14) inset;
+}
+
+.journal-meta .source-badge {
+  margin-bottom: 0;
+}
+
+.journal-details {
+  color: var(--muted);
+}
+
+.rating-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.rating-toggle input {
+  width: 18px;
+  height: 18px;
+}
+
+.journal-hint {
+  font-size: 0.86rem;
+}
+
+.fab-add {
+  position: fixed;
+  right: 16px;
+  bottom: calc(88px + env(safe-area-inset-bottom));
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  color: #fff;
+  box-shadow: var(--shadow);
+  z-index: 30;
+}
+
 .part-card-actions,
 .part-edit-actions {
   display: flex;
@@ -918,7 +1026,8 @@ h2 {
   .grid,
   .settings-grid,
   .parts-grid,
-  .passport-share {
+  .passport-share,
+  .quick-entry-optional {
     grid-template-columns: 1fr;
   }
 
@@ -1031,6 +1140,28 @@ h2 {
     width: 96px;
     min-width: 96px;
     height: 64px;
+  }
+
+  .owner-overview-actions,
+  .journal-meta,
+  .journal-details,
+  .journal-footer,
+  .journal-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .car-selector,
+  .inline-toggle,
+  .fab-add {
+    width: 100%;
+  }
+
+  .fab-add {
+    left: 16px;
+    right: 16px;
+    bottom: calc(86px + env(safe-area-inset-bottom));
+    justify-content: center;
   }
 
   .part-card-actions,

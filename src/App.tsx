@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import QRCode from 'qrcode';
 import {
-  BadgeCheck, Check, ChevronDown, ChevronUp, Cog, LogIn, Moon, Pencil, Plus,
+  BadgeCheck, Bot, CarFront, Check, ChevronDown, ChevronUp, Cog, Download, LogIn, Moon, Pencil, Plus,
   Save, Sparkles, SunMedium, Trash2, Users, Wrench, X,
 } from 'lucide-react';
 import { availableCarColors, resolveCarVisual, vehicleBrandOptions } from './data/carCatalog';
@@ -13,12 +13,14 @@ import {
   signInWithGoogle, signOutCloud, subscribeToAuthChanges, updateServiceQueueStatus, upsertVehiclePart,
 } from './lib/cloud';
 import { clearGarageState, loadGarageState, saveGarageState } from './lib/db';
-import type { GarageState, MaintenanceTask, Part, StaffMember, UserRole } from './types';
+import { checkLocalAiHealth, parseMaintenanceNote } from './lib/localAi';
+import type { Car, GarageState, JournalRecord, MaintenanceTask, Part, StaffMember, UserRole } from './types';
 
 type TabKey = 'overview' | 'parts' | 'maintenance' | 'history' | 'assistant';
 type ThemeMode = 'light' | 'dark';
 type StaffRoleOption = 'mechanic' | 'staff' | 'service_admin';
 type PartDraft = { name: string; oem: string; manufacturer: string; price: string; note: string };
+type QuickEntryDraft = { note: string; mileage: string; partName: string; cost: string; nextMileage: string; rating?: 'good' | 'bad' };
 
 const ownerTabs = ['overview', 'parts', 'maintenance', 'history', 'assistant'] as const;
 const mechanicTabs = ['overview', 'parts', 'maintenance', 'history', 'assistant'] as const;
@@ -33,6 +35,23 @@ const defaultTabLabels: Record<TabKey, string> = {
 
 function formatMoney(value: number) {
   return new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 }).format(value);
+}
+
+function formatTimelineDate(value: number) {
+  return new Intl.DateTimeFormat('ru-RU', {
+    day: '2-digit',
+    month: 'short',
+  }).format(value);
+}
+
+function emptyQuickEntryDraft(): QuickEntryDraft {
+  return {
+    note: '',
+    mileage: '',
+    partName: '',
+    cost: '',
+    nextMileage: '',
+  };
 }
 
 function maintenanceProgress(task: MaintenanceTask, mileageKm: number) {
@@ -87,6 +106,14 @@ function App() {
   const [isPassportExpanded, setIsPassportExpanded] = useState(false);
   const [isVehicleEditorOpen, setIsVehicleEditorOpen] = useState(false);
   const [expandedMaintenanceId, setExpandedMaintenanceId] = useState<string | null>('to-1');
+  const [quickEntryDraft, setQuickEntryDraft] = useState<QuickEntryDraft>(emptyQuickEntryDraft());
+  const [isQuickEntryExpanded, setIsQuickEntryExpanded] = useState(false);
+  const [isSavingQuickEntry, setIsSavingQuickEntry] = useState(false);
+  const [editingJournalId, setEditingJournalId] = useState<string | null>(null);
+  const [swipedRecordId, setSwipedRecordId] = useState<string | null>(null);
+  const [touchStartX, setTouchStartX] = useState<number | null>(null);
+  const [isLocalAiAvailable, setIsLocalAiAvailable] = useState(false);
+  const [localAiStatus, setLocalAiStatus] = useState('Локальный ИИ не проверялся.');
   const [quickCommand, setQuickCommand] = useState('');
   const [assistantInput, setAssistantInput] = useState('');
   const [assistantLog, setAssistantLog] = useState<string[]>(['Помощник готов к быстрым командам.']);
@@ -106,6 +133,7 @@ function App() {
   const [serviceWorkTitle, setServiceWorkTitle] = useState('');
   const [serviceWorkDetails, setServiceWorkDetails] = useState('');
   const assistantRef = useRef<HTMLElement | null>(null);
+  const quickEntryInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => { loadGarageState().then(setState).catch(() => setState(demoState)); }, []);
   useEffect(() => {
@@ -124,6 +152,18 @@ function App() {
     }
   }, [state.role, state.ownerName, state.mechanicName, state.serviceCenter.name, state.serviceCenter.city, state.serviceCenter.bays]);
   useEffect(() => { saveGarageState(state).catch(() => undefined); }, [state]);
+  useEffect(() => {
+    checkLocalAiHealth()
+      .then((result) => {
+        if (!result.ok) throw new Error('Local AI unavailable');
+        setIsLocalAiAvailable(true);
+        setLocalAiStatus(`Локальный ИИ подключен: ${result.model}.`);
+      })
+      .catch(() => {
+        setIsLocalAiAvailable(false);
+        setLocalAiStatus('Локальный ИИ недоступен. Запустите `npm run ai:server` на этом ПК.');
+      });
+  }, []);
   useEffect(() => {
     const code = state.vehicle.ownerCode || session?.user?.id || '';
     if (!code) {
@@ -145,7 +185,11 @@ function App() {
       setSession(next);
       if (!next) { setIsAuthReady(true); return; }
       const cloudState = await loadGarageStateFromCloud();
-      if (cloudState) { setState(cloudState); setHasCloudProfile(true); setSyncStatus('Профиль загружен из облака.'); }
+      if (cloudState) {
+        setState((current) => ({ ...cloudState, cars: current.cars, activeCarId: current.activeCarId, journal: current.journal }));
+        setHasCloudProfile(true);
+        setSyncStatus('Профиль загружен из облака.');
+      }
       setIsAuthReady(true);
     }).catch((error: Error) => setSyncStatus(humanizeCloudError(error)));
     return subscribeToAuthChanges((next) => {
@@ -154,12 +198,19 @@ function App() {
       setIsAuthReady(true);
       setSyncStatus(`Вы вошли как ${next.user.email}.`);
       void loadGarageStateFromCloud().then((cloudState) => {
-        if (cloudState) { setState(cloudState); setHasCloudProfile(true); }
+        if (cloudState) {
+          setState((current) => ({ ...cloudState, cars: current.cars, activeCarId: current.activeCarId, journal: current.journal }));
+          setHasCloudProfile(true);
+        }
       }).catch((error) => setSyncStatus(humanizeCloudError(error)));
     });
   }, []);
 
   const roleLabel = state.role === 'owner' ? 'Владелец' : state.role === 'mechanic' ? 'Механик' : state.role === 'service_admin' ? 'Админ СТО' : 'Модератор';
+  const activeCar = state.cars.find((car) => car.id === state.activeCarId) ?? state.cars[0];
+  const ownerTimeline = state.journal
+    .filter((record) => record.carId === (activeCar?.id ?? state.activeCarId))
+    .sort((left, right) => right.createdAt - left.createdAt);
   const carVisual = resolveCarVisual(state.vehicle.brand);
   const selectedBrandOption = vehicleBrandOptions.find((item) => item.brand === state.vehicle.brand) ?? vehicleBrandOptions[0];
   const tabs = state.role === 'owner' ? ownerTabs : state.role === 'mechanic' ? mechanicTabs : adminTabs;
@@ -173,20 +224,208 @@ function App() {
         : profileName
     : session?.user?.user_metadata?.full_name ?? profileName;
   const tabLabels =
-    state.role === 'service_admin'
+    state.role === 'owner'
+      ? { overview: 'Лента', parts: 'Детали', maintenance: 'ТО', history: 'Сервис', assistant: 'Локальный ИИ' }
+      : state.role === 'service_admin'
       ? { overview: 'СТО', parts: 'Детали', maintenance: 'Клиенты', history: 'Логи', assistant: 'Заметки' }
       : state.role === 'company_admin'
         ? { overview: 'Компании', parts: 'Детали', maintenance: 'Люди', history: 'Логи', assistant: 'Заметки' }
         : defaultTabLabels;
 
+  useEffect(() => {
+    if (!showOnboarding && state.role === 'owner') {
+      quickEntryInputRef.current?.focus();
+    }
+  }, [showOnboarding, state.role]);
+
   function presentCloudError(error: unknown, fallback: string) {
     setSyncStatus(humanizeCloudError(error) || fallback);
+  }
+
+  function mergeLocalOwnerState(current: GarageState, cloudState: GarageState) {
+    return {
+      ...cloudState,
+      cars: current.cars,
+      activeCarId: current.activeCarId,
+      journal: current.journal,
+    };
   }
 
   function switchRole(role: UserRole) {
     setState((current) => ({ ...current, role, approvalStatus: role === 'mechanic' ? 'pending' : 'approved' }));
     setActiveTab('overview');
     setIsSettingsOpen(false);
+  }
+
+  function updateActiveCar(nextCar: Car) {
+    setState((current) => ({
+      ...current,
+      activeCarId: nextCar.id,
+      vehicle: {
+        ...current.vehicle,
+        brand: nextCar.brand ?? current.vehicle.brand,
+        model: nextCar.model ?? current.vehicle.model,
+      },
+    }));
+  }
+
+  function addCarTemplate() {
+    const carId = `car-${Date.now()}`;
+    const brand = vehicleBrandOptions[0];
+    const nextCar: Car = {
+      id: carId,
+      name: `Моя ${brand.brand} ${brand.models[0]}`,
+      brand: brand.brand,
+      model: brand.models[0],
+    };
+
+    setState((current) => ({
+      ...current,
+      cars: [nextCar, ...current.cars],
+      activeCarId: carId,
+    }));
+    setSyncStatus('Добавлена новая машина для журнала.');
+  }
+
+  function exportRecords() {
+    const payload = JSON.stringify(state.journal, null, 2);
+    const blob = new Blob([payload], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `codexcar-records-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setSyncStatus('Экспорт JSON подготовлен.');
+  }
+
+  function beginEditJournal(record: JournalRecord) {
+    setEditingJournalId(record.id);
+    setQuickEntryDraft({
+      note: record.rawNote ?? record.note,
+      mileage: record.mileage ? String(record.mileage) : '',
+      partName: record.partName ?? '',
+      cost: record.cost ? String(record.cost) : '',
+      nextMileage: record.nextMileage ? String(record.nextMileage) : '',
+      rating: record.rating,
+    });
+    setIsQuickEntryExpanded(true);
+    setActiveTab('overview');
+    quickEntryInputRef.current?.focus();
+  }
+
+  function removeJournalRecord(recordId: string) {
+    setState((current) => ({
+      ...current,
+      journal: current.journal.filter((record) => record.id !== recordId),
+    }));
+    if (editingJournalId === recordId) {
+      setEditingJournalId(null);
+      setQuickEntryDraft(emptyQuickEntryDraft());
+    }
+    setSwipedRecordId(null);
+    setSyncStatus('Запись удалена.');
+  }
+
+  async function saveQuickEntry() {
+    const rawNote = quickEntryDraft.note.trim();
+    if (!rawNote || !activeCar) return;
+
+    setIsSavingQuickEntry(true);
+
+    const fallbackRecord: JournalRecord = {
+      id: editingJournalId ?? `record-${Date.now()}`,
+      carId: activeCar.id,
+      createdAt: editingJournalId
+        ? state.journal.find((record) => record.id === editingJournalId)?.createdAt ?? Date.now()
+        : Date.now(),
+      mileage: quickEntryDraft.mileage ? Number.parseInt(quickEntryDraft.mileage, 10) || undefined : undefined,
+      note: rawNote,
+      rawNote,
+      category: 'manual',
+      partName: quickEntryDraft.partName || undefined,
+      rating: quickEntryDraft.rating,
+      cost: quickEntryDraft.cost ? Number.parseInt(quickEntryDraft.cost, 10) || undefined : undefined,
+      nextMileage: quickEntryDraft.nextMileage ? Number.parseInt(quickEntryDraft.nextMileage, 10) || undefined : undefined,
+      source: 'manual',
+    };
+
+    let parsed = fallbackRecord;
+    if (isLocalAiAvailable) {
+      try {
+        const result = await parseMaintenanceNote({
+          note: rawNote,
+          mileage: fallbackRecord.mileage,
+          carName: activeCar.name,
+        });
+        parsed = {
+          ...fallbackRecord,
+          note: result.note || fallbackRecord.note,
+          category: result.category || fallbackRecord.category,
+          partName: result.partName || fallbackRecord.partName,
+          rating: result.rating ?? fallbackRecord.rating,
+          cost: result.cost ?? fallbackRecord.cost,
+          nextMileage: result.nextMileage ?? fallbackRecord.nextMileage,
+          source: result.source ?? 'ai',
+        };
+      } catch {
+        setLocalAiStatus('Локальный ИИ не ответил, запись сохранена как обычная заметка.');
+      }
+    }
+
+    setState((current) => ({
+      ...current,
+      journal: editingJournalId
+        ? current.journal.map((record) => (record.id === editingJournalId ? parsed : record))
+        : [parsed, ...current.journal],
+    }));
+
+    if (!editingJournalId && parsed.note.toLowerCase().includes('масло')) {
+      setState((current) => ({
+        ...current,
+        maintenance: current.maintenance.map((task) => task.id === 'to-1'
+          ? {
+            ...task,
+            lastDoneKm: parsed.mileage ?? current.vehicle.mileageKm,
+            dueAtKm: parsed.nextMileage ?? ((parsed.mileage ?? current.vehicle.mileageKm) + task.intervalKm),
+            notes: `Последняя быстрая запись: ${new Date(parsed.createdAt).toLocaleDateString('ru-RU')}.`,
+          }
+          : task),
+      }));
+    }
+
+    setEditingJournalId(null);
+    setQuickEntryDraft(emptyQuickEntryDraft());
+    setIsQuickEntryExpanded(false);
+    setSwipedRecordId(null);
+    setIsSavingQuickEntry(false);
+    setSyncStatus(isLocalAiAvailable ? 'Запись сохранена и разобрана локальным ИИ.' : 'Запись сохранена локально.');
+  }
+
+  function applyTemplateRecord(note: string) {
+    setQuickEntryDraft((current) => ({ ...current, note }));
+    setIsQuickEntryExpanded(false);
+    quickEntryInputRef.current?.focus();
+  }
+
+  function handleRecordSwipeStart(clientX: number) {
+    setTouchStartX(clientX);
+  }
+
+  function handleRecordSwipeEnd(recordId: string, clientX: number) {
+    if (touchStartX === null) return;
+    const delta = clientX - touchStartX;
+    setTouchStartX(null);
+
+    if (delta >= 64) {
+      const targetRecord = state.journal.find((record) => record.id === recordId);
+      if (targetRecord) beginEditJournal(targetRecord);
+      return;
+    }
+
+    if (delta <= -64) {
+      setSwipedRecordId((current) => current === recordId ? null : recordId);
+    }
   }
 
   async function addPart(source: 'self' | 'service') {
@@ -212,7 +451,7 @@ function App() {
         });
         const cloudState = await loadGarageStateFromCloud();
         if (cloudState && state.role === 'owner') {
-          setState(cloudState);
+          setState((current) => mergeLocalOwnerState(current, cloudState));
         } else {
           setState((current) => ({ ...current, parts: [next, ...current.parts] }));
         }
@@ -270,7 +509,7 @@ function App() {
         });
         const cloudState = await loadGarageStateFromCloud();
         if (cloudState && state.role === 'owner') {
-          setState(cloudState);
+          setState((current) => mergeLocalOwnerState(current, cloudState));
         } else {
           setState((current) => ({ ...current, parts: current.parts.map((part) => part.id === editingPartId ? updatedPart : part) }));
         }
@@ -295,6 +534,12 @@ function App() {
     const option = vehicleBrandOptions.find((item) => item.brand === brand);
     setState((current) => ({
       ...current,
+      cars: current.cars.map((car) => car.id === current.activeCarId ? {
+        ...car,
+        brand,
+        model: option?.models[0] ?? current.vehicle.model,
+        name: `Моя ${brand} ${option?.models[0] ?? current.vehicle.model}`,
+      } : car),
       vehicle: {
         ...current.vehicle,
         brand,
@@ -313,7 +558,7 @@ function App() {
       }).then(async () => {
         const cloudState = await loadGarageStateFromCloud();
         if (cloudState) {
-          setState(cloudState);
+          setState((current) => mergeLocalOwnerState(current, cloudState));
         }
         setActiveServiceOwnerCode(lookup);
         setClientLookupCode('');
@@ -424,7 +669,7 @@ function App() {
         await updateServiceQueueStatus({ queueId, status });
         const cloudState = await loadGarageStateFromCloud();
         if (cloudState) {
-          setState(cloudState);
+          setState((current) => mergeLocalOwnerState(current, cloudState));
         }
         setSyncStatus('Статус очереди обновлен.');
       } catch (error) {
@@ -533,7 +778,7 @@ function App() {
     if (!session) return;
     try {
       const cloudState = await loadGarageStateFromCloud();
-      if (cloudState) { setState(cloudState); setHasCloudProfile(true); }
+      if (cloudState) { setState((current) => mergeLocalOwnerState(current, cloudState)); setHasCloudProfile(true); }
       setSyncStatus('Данные обновлены.');
     } catch (error) {
       presentCloudError(error, 'Не удалось обновить данные.');
@@ -559,7 +804,17 @@ function App() {
           color: state.vehicle.color,
           nextInspection: state.vehicle.nextInspection,
         });
-        setState((current) => ({ ...current, ownerName: profileName, vehicle: { ...current.vehicle, vin: nextVin } }));
+        setState((current) => ({
+          ...current,
+          ownerName: profileName,
+          cars: current.cars.map((car) => car.id === current.activeCarId ? {
+            ...car,
+            brand: current.vehicle.brand,
+            model: current.vehicle.model,
+            name: `${current.ownerName || profileName}: ${current.vehicle.brand} ${current.vehicle.model}`,
+          } : car),
+          vehicle: { ...current.vehicle, vin: nextVin },
+        }));
       } else if (state.role === 'mechanic') {
         await bootstrapDemoGarage(profileName.trim(), 'mechanic');
         setState((current) => ({ ...current, mechanicName: profileName, approvalStatus: 'pending' }));
@@ -584,7 +839,7 @@ function App() {
       setHasCloudProfile(true);
       const cloudState = await loadGarageStateFromCloud();
       if (cloudState) {
-        setState(cloudState);
+        setState((current) => mergeLocalOwnerState(current, cloudState));
         setHasCloudProfile(true);
       }
       setSyncStatus('Профиль создан.');
@@ -642,6 +897,65 @@ function App() {
             <span className={`source-badge ${sourceClass}`}><Check size={14} />{sourceLabel}</span>
             <p className="muted">{part.note}</p>
           </>
+        )}
+      </article>
+    );
+  }
+
+  function renderJournalCard(record: JournalRecord) {
+    const isSwiped = swipedRecordId === record.id;
+    return (
+      <article
+        className={`journal-card ${isSwiped ? 'swiped' : ''}`}
+        key={record.id}
+        onTouchStart={(event) => handleRecordSwipeStart(event.changedTouches[0].clientX)}
+        onTouchEnd={(event) => handleRecordSwipeEnd(record.id, event.changedTouches[0].clientX)}
+      >
+        <div className="journal-meta">
+          <span className="source-badge neutral">{formatTimelineDate(record.createdAt)}</span>
+          {record.mileage ? <span className="source-badge neutral">{record.mileage.toLocaleString('ru-RU')} км</span> : null}
+          {record.source === 'ai' ? <span className="source-badge service"><Bot size={14} />AI</span> : null}
+        </div>
+        <strong>{record.note}</strong>
+        <div className="journal-details">
+          {record.partName ? <span>{record.partName}</span> : null}
+          {record.cost ? <span>{formatMoney(record.cost)}</span> : null}
+          {record.nextMileage ? <span>След. замена: {record.nextMileage.toLocaleString('ru-RU')} км</span> : null}
+        </div>
+        <div className="journal-footer">
+          <label className="rating-toggle">
+            <input
+              type="checkbox"
+              checked={record.rating === 'good'}
+              onChange={() => setState((current) => ({
+                ...current,
+                journal: current.journal.map((item) => item.id === record.id ? { ...item, rating: item.rating === 'good' ? undefined : 'good' } : item),
+              }))}
+            />
+            <span>Подошли</span>
+          </label>
+          <label className="rating-toggle">
+            <input
+              type="checkbox"
+              checked={record.rating === 'bad'}
+              onChange={() => setState((current) => ({
+                ...current,
+                journal: current.journal.map((item) => item.id === record.id ? { ...item, rating: item.rating === 'bad' ? undefined : 'bad' } : item),
+              }))}
+            />
+            <span>Не подошли</span>
+          </label>
+          <span className={`source-badge ${record.rating === 'bad' ? 'self' : record.rating === 'good' ? 'service' : 'neutral'}`}>
+            {record.rating === 'bad' ? '👎' : record.rating === 'good' ? '👍' : 'Без оценки'}
+          </span>
+        </div>
+        {isSwiped ? (
+          <div className="journal-actions">
+            <button className="ghost-button compact" onClick={() => beginEditJournal(record)}><Pencil size={14} />Редактировать</button>
+            <button className="danger-button compact" onClick={() => removeJournalRecord(record.id)}><Trash2 size={14} />Удалить</button>
+          </div>
+        ) : (
+          <p className="muted journal-hint">Свайп влево: удалить. Свайп вправо: редактировать.</p>
         )}
       </article>
     );
@@ -705,7 +1019,7 @@ function App() {
         </section>
       ) : (
         <>
-      <section className="quick-command"><div className="quick-command-copy"><h2>Быстрое действие</h2><p className="muted">Например: `поменял сегодня масло 5W40`.</p></div><div className="assistant-input quick-command-input"><input value={quickCommand} onChange={(event) => setQuickCommand(event.target.value)} placeholder="Что произошло?" /><button className="primary-button" onClick={applyQuickCommand}>Выполнить</button></div></section>
+      {state.role !== 'owner' && <section className="quick-command"><div className="quick-command-copy"><h2>Быстрое действие</h2><p className="muted">Например: `поменял сегодня масло 5W40`.</p></div><div className="assistant-input quick-command-input"><input value={quickCommand} onChange={(event) => setQuickCommand(event.target.value)} placeholder="Что произошло?" /><button className="primary-button" onClick={applyQuickCommand}>Выполнить</button></div></section>}
 
       <header className="hero-card">
         <div className="hero-copy"><h1>{state.role === 'owner' ? 'Машина и обслуживание в одном месте' : state.role === 'mechanic' ? 'Работы и детали в одном кабинете' : 'Команда и сервис без лишнего шума'}</h1><p className="hero-text">{syncStatus}</p><div className="hero-actions"><button className="primary-button" onClick={() => assistantRef.current?.scrollIntoView({ behavior: 'smooth' })}><Sparkles size={18} />Открыть помощника</button><button className="ghost-button" onClick={refreshCloud} disabled={!session}>Обновить</button></div></div>
@@ -715,11 +1029,110 @@ function App() {
       <nav className="tabs tabs-top">{tabs.map((tab) => <button key={tab} className={activeTab === tab ? 'active' : ''} onClick={() => setActiveTab(tab)}>{tabLabels[tab]}</button>)}</nav>
 
       <main className="dashboard">
-        {state.role === 'owner' && activeTab === 'overview' && <section className="grid"><article className="panel"><div className="panel-heading"><div><h2>ID владельца</h2><p className="muted">Обычный ID для тестов и тот же код внутри QR.</p></div><BadgeCheck size={22} /></div><div className="owner-code-card"><strong>{state.vehicle.ownerCode}</strong><p className="muted">{state.ownerName} • {state.vehicle.brand} {state.vehicle.model}</p></div></article></section>}
+        {state.role === 'owner' && activeTab === 'overview' && (
+          <section className="grid">
+            <article className="panel panel-wide">
+              <div className="panel-heading">
+                <div>
+                  <h2>Быстрая запись</h2>
+                  <p className="muted">Одна строка, минимум тапов, потом локальный ИИ сам разберет заметку.</p>
+                </div>
+                <div className="owner-overview-actions">
+                  <div className="assistant-input car-selector">
+                    <select value={activeCar?.id} onChange={(event) => {
+                      const nextCar = state.cars.find((car) => car.id === event.target.value);
+                      if (nextCar) updateActiveCar(nextCar);
+                    }}>
+                      {state.cars.map((car) => <option key={car.id} value={car.id}>{car.name}</option>)}
+                    </select>
+                  </div>
+                  <button className="ghost-button compact" onClick={addCarTemplate}><CarFront size={14} />Новая машина</button>
+                </div>
+              </div>
+              <div className="quick-entry-shell">
+                <div className="assistant-input quick-entry-primary">
+                  <input
+                    ref={quickEntryInputRef}
+                    value={quickEntryDraft.note}
+                    onChange={(event) => setQuickEntryDraft((current) => ({ ...current, note: event.target.value }))}
+                    placeholder="Например: поменял масло"
+                  />
+                  <button className="primary-button big-add-button" onClick={saveQuickEntry} disabled={isSavingQuickEntry || !quickEntryDraft.note.trim()}>
+                    <Plus size={18} />
+                    {editingJournalId ? 'Сохранить' : 'Добавить'}
+                  </button>
+                </div>
+                <button className="ghost-button compact inline-toggle" onClick={() => setIsQuickEntryExpanded((current) => !current)}>
+                  {isQuickEntryExpanded ? 'Скрыть детали' : 'Доп. поля'}
+                </button>
+                {isQuickEntryExpanded && (
+                  <div className="quick-entry-optional">
+                    <div className="assistant-input"><input value={quickEntryDraft.mileage} onChange={(event) => setQuickEntryDraft((current) => ({ ...current, mileage: event.target.value }))} placeholder="Пробег, км" /></div>
+                    <div className="assistant-input"><input value={quickEntryDraft.partName} onChange={(event) => setQuickEntryDraft((current) => ({ ...current, partName: event.target.value }))} placeholder="Деталь / бренд" /></div>
+                    <div className="assistant-input"><input value={quickEntryDraft.cost} onChange={(event) => setQuickEntryDraft((current) => ({ ...current, cost: event.target.value }))} placeholder="Стоимость" /></div>
+                    <div className="assistant-input"><input value={quickEntryDraft.nextMileage} onChange={(event) => setQuickEntryDraft((current) => ({ ...current, nextMileage: event.target.value }))} placeholder="Следующая замена через, км" /></div>
+                    <div className="segmented rating-segmented">
+                      <button className={quickEntryDraft.rating === 'good' ? 'active' : ''} onClick={() => setQuickEntryDraft((current) => ({ ...current, rating: current.rating === 'good' ? undefined : 'good' }))}>Подошли</button>
+                      <button className={quickEntryDraft.rating === 'bad' ? 'active' : ''} onClick={() => setQuickEntryDraft((current) => ({ ...current, rating: current.rating === 'bad' ? undefined : 'bad' }))}>Не подошли</button>
+                    </div>
+                  </div>
+                )}
+                <div className="owner-journal-meta">
+                  <span className={`source-badge ${isLocalAiAvailable ? 'service' : 'neutral'}`}>{isLocalAiAvailable ? 'Локальный ИИ активен' : 'Локальный ИИ офлайн'}</span>
+                  <span className="muted">{localAiStatus}</span>
+                </div>
+              </div>
+            </article>
+            <article className="panel panel-wide">
+              <div className="panel-heading">
+                <div>
+                  <h2>Лента обслуживания</h2>
+                  <p className="muted">Новые записи сверху. Свайп по карточке открывает действия.</p>
+                </div>
+                <button className="ghost-button compact" onClick={() => applyTemplateRecord('Поменял масло')}>
+                  Поменял масло
+                </button>
+              </div>
+              <div className="timeline journal-timeline">
+                {ownerTimeline.length ? ownerTimeline.map(renderJournalCard) : <EmptyState title="Добавь первую запись" text="Начните с короткой заметки, например: поменял масло." />}
+              </div>
+            </article>
+          </section>
+        )}
         {state.role === 'owner' && activeTab === 'parts' && <section className="grid"><article className="panel panel-wide"><div className="panel-heading"><div><h2>Добавить деталь</h2><p className="muted">Получит желтую галочку: менял сам.</p></div><Plus size={20} /></div><div className="cloud-card"><div className="assistant-input"><input value={ownerPartDraft.name} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Название" /></div><div className="assistant-input"><input value={ownerPartDraft.oem} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, oem: event.target.value }))} placeholder="OEM" /></div><div className="assistant-input"><input value={ownerPartDraft.manufacturer} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, manufacturer: event.target.value }))} placeholder="Производитель" /></div><div className="assistant-input"><input value={ownerPartDraft.price} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, price: event.target.value }))} placeholder="Цена" /></div><div className="assistant-input"><input value={ownerPartDraft.note} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, note: event.target.value }))} placeholder="Заметка" /></div><button className="primary-button" onClick={() => addPart('self')}>Добавить</button></div></article><article className="panel panel-wide"><div className="parts-grid">{state.parts.length ? state.parts.map(renderPartCard) : <EmptyState title="Деталей пока нет" text="Добавьте первую деталь выше, чтобы сохранить OEM, производителя и заметку по замене." />}</div></article></section>}
         {state.role === 'owner' && activeTab === 'maintenance' && <section className="grid"><article className="panel panel-wide maintenance-stack">{state.maintenance.length ? state.maintenance.map((task) => <article className="maintenance-card" key={task.id}><button className="maintenance-toggle" onClick={() => setExpandedMaintenanceId((current) => current === task.id ? null : task.id)}><div><strong>{task.title}</strong><p className="muted">{task.dueAtKm.toLocaleString('ru-RU')} км</p></div>{expandedMaintenanceId === task.id ? <ChevronUp size={18} /> : <ChevronDown size={18} />}</button><div className="progress-track"><div className="progress-bar" style={{ width: `${maintenanceProgress(task, state.vehicle.mileageKm)}%` }} /></div>{expandedMaintenanceId === task.id && <div className="maintenance-details"><ul className="stack-list">{task.items.map((item) => <li key={item}>{item}</li>)}</ul><p className="muted">{task.notes}</p></div>}</article>) : <EmptyState title="ТО пока не заполнено" text="После первой записи обслуживания здесь появятся регламентные работы и интервалы пробега." />}</article></section>}
         {state.role === 'owner' && activeTab === 'history' && <section className="grid"><article className="panel panel-wide"><div className="timeline">{state.records.length ? state.records.map((record) => <div className="timeline-item" key={record.id}><div><strong>{record.title}</strong><p>{record.date} • {record.location} • {record.mechanic}</p><p className="muted">{record.details}</p></div><span className={`source-badge ${record.verified ? 'service' : 'neutral'}`}>{record.verified ? 'Подтверждено' : 'Черновик'}</span></div>) : <EmptyState title="История обслуживания пуста" text="Когда вы или сервис добавите первую работу, она появится в этом разделе." />}</div></article></section>}
-        {state.role === 'owner' && activeTab === 'assistant' && <section className="grid" ref={assistantRef}><article className="panel panel-wide assistant-panel"><div className="assistant-log">{assistantLog.map((message, index) => <p key={`${message}-${index}`}>{message}</p>)}</div><div className="assistant-input"><input value={assistantInput} onChange={(event) => setAssistantInput(event.target.value)} placeholder="Введите запрос" /><button className="primary-button" onClick={() => { if (!assistantInput.trim()) return; setAssistantLog((current) => [...current, `Вы: ${assistantInput}`, `AI: ${assistantReply(assistantInput, state)}`]); setAssistantInput(''); }}>Отправить</button></div></article></section>}
+        {state.role === 'owner' && activeTab === 'assistant' && (
+          <section className="grid" ref={assistantRef}>
+            <article className="panel">
+              <div className="panel-heading">
+                <div>
+                  <h2>Локальный ИИ</h2>
+                  <p className="muted">Работает через `Ollama` на вашем ПК и помогает разбирать короткие записи.</p>
+                </div>
+                <Bot size={22} />
+              </div>
+              <div className="cloud-card">
+                <span className={`source-badge ${isLocalAiAvailable ? 'service' : 'neutral'}`}>{isLocalAiAvailable ? 'Подключен' : 'Недоступен'}</span>
+                <p className="muted">{localAiStatus}</p>
+                <p className="muted">Если ИИ недоступен, запись все равно сохраняется локально как обычная заметка.</p>
+              </div>
+            </article>
+            <article className="panel">
+              <div className="panel-heading">
+                <div>
+                  <h2>Экспорт</h2>
+                  <p className="muted">JSON уже подготовлен под будущий PDF и выгрузку истории.</p>
+                </div>
+                <Download size={22} />
+              </div>
+              <div className="cloud-card">
+                <button className="primary-button" onClick={exportRecords}><Download size={16} />Экспортировать записи</button>
+                <p className="muted">Экспортируются все локальные записи по всем машинам владельца.</p>
+              </div>
+            </article>
+          </section>
+        )}
 
         {state.role === 'mechanic' && activeTab === 'overview' && <section className="grid"><article className="panel panel-wide"><div className="timeline">{state.mechanicTasks.length ? state.mechanicTasks.map((task) => <div className="timeline-item" key={task.id}><div><strong>{task.title}</strong><p>{task.carLabel} • {task.ownerName}</p><p className="muted">{task.bay} • {task.scheduledAt}</p></div><button className="ghost-button compact" onClick={() => setState((current) => ({ ...current, mechanicTasks: current.mechanicTasks.map((item) => item.id === task.id ? { ...item, status: 'done' } : item) }))}>Готово</button></div>) : <EmptyState title="Сегодня задач пока нет" text="Новые работы появятся здесь, как только администратор или вы добавите машину в очередь." />}</div></article></section>}
         {state.role === 'mechanic' && activeTab === 'parts' && <section className="grid"><article className="panel panel-wide"><div className="panel-heading"><div><h2>Добавить деталь</h2><p className="muted">Будет отмечена зеленой галочкой как работа СТО.</p></div><Plus size={20} /></div><div className="cloud-card"><div className="assistant-input"><input value={servicePartDraft.name} onChange={(event) => setServicePartDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Название" /></div><div className="assistant-input"><input value={servicePartDraft.oem} onChange={(event) => setServicePartDraft((current) => ({ ...current, oem: event.target.value }))} placeholder="OEM" /></div><div className="assistant-input"><input value={servicePartDraft.manufacturer} onChange={(event) => setServicePartDraft((current) => ({ ...current, manufacturer: event.target.value }))} placeholder="Производитель" /></div><div className="assistant-input"><input value={servicePartDraft.price} onChange={(event) => setServicePartDraft((current) => ({ ...current, price: event.target.value }))} placeholder="Цена" /></div><div className="assistant-input"><input value={servicePartDraft.note} onChange={(event) => setServicePartDraft((current) => ({ ...current, note: event.target.value }))} placeholder="Заметка" /></div><button className="primary-button" onClick={() => addPart('service')}>Добавить</button></div></article><article className="panel panel-wide"><div className="parts-grid">{state.parts.length ? state.parts.map(renderPartCard) : <EmptyState title="Деталей пока нет" text="Выберите авто владельца и добавьте первую установленную деталь." />}</div></article></section>}
@@ -737,6 +1150,20 @@ function App() {
         {state.role === 'company_admin' && activeTab === 'history' && <section className="grid"><article className="panel panel-wide"><div className="panel-heading"><div><h2>Логи платформы</h2><p className="muted">Действия компаний, сотрудников и модерации.</p></div><Cog size={22} /></div><div className="timeline">{state.activityLogs.map((log) => <div className="timeline-item" key={log.id}><div><strong>{log.actor}</strong><p>{log.action}</p><p className="muted">{log.target} • {log.timestamp} • {log.scope}</p></div></div>)}</div></article></section>}
         {state.role === 'company_admin' && activeTab === 'assistant' && <section className="grid" ref={assistantRef}><article className="panel panel-wide assistant-panel"><div className="assistant-log">{assistantLog.map((message, index) => <p key={`${message}-${index}`}>{message}</p>)}</div><div className="assistant-input"><input value={assistantInput} onChange={(event) => setAssistantInput(event.target.value)} placeholder="Заметка модератора" /><button className="primary-button" onClick={() => { if (!assistantInput.trim()) return; setAssistantLog((current) => [...current, `Вы: ${assistantInput}`, `AI: ${assistantReply(assistantInput, state)}`]); setAssistantInput(''); }}>Сохранить</button></div></article></section>}
       </main>
+
+      {state.role === 'owner' && !showOnboarding ? (
+        <button
+          className="fab-add"
+          onClick={() => {
+            setActiveTab('overview');
+            setIsQuickEntryExpanded(false);
+            quickEntryInputRef.current?.focus();
+          }}
+        >
+          <Plus size={22} />
+          Добавить
+        </button>
+      ) : null}
 
       <nav className="tabs tabs-bottom">{tabs.map((tab) => <button key={tab} className={activeTab === tab ? 'active' : ''} onClick={() => setActiveTab(tab)}>{tabLabels[tab]}</button>)}</nav>
         </>

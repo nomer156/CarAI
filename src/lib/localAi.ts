@@ -31,6 +31,7 @@ const DEFAULT_LOCAL_AI_URL = 'http://127.0.0.1:11535';
 const DEFAULT_PUBLIC_AI_URL = 'https://vpn-little-hosts-deal.trycloudflare.com';
 const LEGACY_PUBLIC_AI_URLS = [
   'https://collaborative-pmid-cargo-llp.trycloudflare.com',
+  'https://those-omaha-commitment-opinions.trycloudflare.com',
 ];
 
 function sanitizeUrl(value?: string | null) {

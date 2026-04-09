@@ -105,6 +105,37 @@ function EmptyState({ title, text }: { title: string; text: string }) {
   );
 }
 
+function resolvePreferredOwnerCommand<T extends { intent: string; confidence: number }>(
+  heuristicCommand: T,
+  aiCommand: T,
+) {
+  const heuristicIntent = heuristicCommand.intent;
+  const aiIntent = aiCommand.intent;
+  const heuristicIsAction = heuristicIntent !== 'note_only' && heuristicIntent !== 'ask_ai';
+
+  if (heuristicIsAction && (aiIntent === 'note_only' || aiIntent === 'ask_ai')) {
+    return heuristicCommand;
+  }
+
+  if (heuristicIntent === 'replace_oil' && aiIntent !== 'replace_oil') {
+    return heuristicCommand;
+  }
+
+  if (heuristicIntent === 'service_event' && aiIntent === 'add_part') {
+    return heuristicCommand;
+  }
+
+  if (heuristicIntent === 'update_mileage' && aiIntent === 'note_only') {
+    return heuristicCommand;
+  }
+
+  if ((aiCommand.confidence ?? 0) + 0.12 < (heuristicCommand.confidence ?? 0)) {
+    return heuristicCommand;
+  }
+
+  return aiCommand;
+}
+
 function App() {
   const [state, setState] = useState<GarageState>(demoState);
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
@@ -401,6 +432,8 @@ function App() {
     if (!rawNote || !activeCar) return;
 
     setIsSavingQuickEntry(true);
+    setSyncStatus('Сохраняем запись...');
+
     const draftMileage = quickEntryDraft.mileage ? Number.parseInt(quickEntryDraft.mileage, 10) || undefined : undefined;
     const draftCost = quickEntryDraft.cost ? Number.parseInt(quickEntryDraft.cost, 10) || undefined : undefined;
     const draftNextMileage = quickEntryDraft.nextMileage ? Number.parseInt(quickEntryDraft.nextMileage, 10) || undefined : undefined;
@@ -409,92 +442,101 @@ function App() {
       .sort((left, right) => right.createdAt - left.createdAt)[0];
     const recommendedOil = resolveRecommendedOil(state.vehicle.brand, state.vehicle.model);
 
-    let command = heuristicNormalizeOwnerCommand({
-      text: rawNote,
-      brand: state.vehicle.brand,
-      model: state.vehicle.model,
-      currentMileageKm: state.vehicle.mileageKm,
-    });
-
-    command = {
-      ...command,
+    const heuristicCommand = {
+      ...heuristicNormalizeOwnerCommand({
+        text: rawNote,
+        brand: state.vehicle.brand,
+        model: state.vehicle.model,
+        currentMileageKm: state.vehicle.mileageKm,
+      }),
       rawText: rawNote,
-      mileageKm: draftMileage ?? command.mileageKm,
-      partName: quickEntryDraft.partName || command.partName,
-      cost: draftCost ?? command.cost,
-      nextMileage: draftNextMileage ?? command.nextMileage,
-      category: command.category ?? 'manual',
+      mileageKm: draftMileage,
+      partName: quickEntryDraft.partName || undefined,
+      cost: draftCost,
+      nextMileage: draftNextMileage,
+      category: 'manual',
     };
 
-    if (isLocalAiAvailable) {
-      try {
-        const result = await normalizeOwnerCommand({
-          text: rawNote,
-          mileage: draftMileage ?? state.vehicle.mileageKm,
-          brand: state.vehicle.brand,
-          model: state.vehicle.model,
-          lastOil: previousOilRecord?.partName,
-          recommendedOil: recommendedOil?.label,
-        });
-        command = {
-          ...result,
-          rawText: rawNote,
-          mileageKm: draftMileage ?? result.mileageKm,
-          partName: quickEntryDraft.partName || result.partName,
-          cost: draftCost ?? result.cost,
-          nextMileage: draftNextMileage ?? result.nextMileage,
-        };
-      } catch {
-        setLocalAiStatus('Локальный ИИ не ответил. Включен локальный разбор по правилам.');
+    try {
+      let command = heuristicCommand;
+
+      if (isLocalAiAvailable) {
+        try {
+          const aiResult = await Promise.race([
+            normalizeOwnerCommand({
+              text: rawNote,
+              mileage: draftMileage ?? state.vehicle.mileageKm,
+              brand: state.vehicle.brand,
+              model: state.vehicle.model,
+              lastOil: previousOilRecord?.partName,
+              recommendedOil: recommendedOil?.label,
+            }),
+            new Promise<never>((_, reject) => {
+              window.setTimeout(() => reject(new Error('AI normalization timeout')), 3500);
+            }),
+          ]);
+
+          const mergedAiCommand = {
+            ...aiResult,
+            rawText: rawNote,
+            mileageKm: draftMileage ?? aiResult.mileageKm,
+            partName: quickEntryDraft.partName || aiResult.partName,
+            cost: draftCost ?? aiResult.cost,
+            nextMileage: draftNextMileage ?? aiResult.nextMileage,
+            category: aiResult.category ?? 'manual',
+          };
+
+          command = resolvePreferredOwnerCommand(heuristicCommand, mergedAiCommand);
+        } catch {
+          setLocalAiStatus('Локальный ИИ не ответил вовремя. Запись сохраняется по локальным правилам.');
+          command = heuristicCommand;
+        }
       }
-    }
 
-    if (command.intent === 'ask_ai') {
-      const answer = command.answerText?.trim() || 'Подскажу по обслуживанию машины, когда локальный ИИ сможет ответить увереннее.';
-      setAssistantLog((current) => [...current, `Вы: ${rawNote}`, `AI: ${answer}`]);
-      setQuickEntryDraft(emptyQuickEntryDraft());
-      setIsQuickEntryExpanded(false);
-      setIsSavingQuickEntry(false);
-      setSyncStatus(answer);
-      return;
-    }
+      if (command.intent === 'ask_ai') {
+        const answer = command.answerText?.trim() || 'Подскажу по обслуживанию машины, когда локальный ИИ сможет ответить увереннее.';
+        setAssistantLog((current) => [...current, `Вы: ${rawNote}`, `AI: ${answer}`]);
+        setQuickEntryDraft(emptyQuickEntryDraft());
+        setIsQuickEntryExpanded(false);
+        setSyncStatus(answer);
+        return;
+      }
 
-    const plan = buildOwnerExecutionPlan({
-      command,
-      state,
-      activeCarId: activeCar.id,
-      editingJournalId,
-    });
+      const plan = buildOwnerExecutionPlan({
+        command,
+        state,
+        activeCarId: activeCar.id,
+        editingJournalId,
+      });
 
-    const nextRecord: JournalRecord = {
-      ...plan.record,
-      rating: quickEntryDraft.rating ?? plan.record.rating,
-      category: plan.record.category ?? 'manual',
-    };
+      const nextRecord: JournalRecord = {
+        ...plan.record,
+        rating: quickEntryDraft.rating ?? plan.record.rating,
+        category: plan.record.category ?? 'manual',
+      };
 
-    const applyOwnerPlan = (targetPlan: OwnerExecutionPlan, targetRecord: JournalRecord) => {
       setState((current) => {
         const nextJournal = editingJournalId
-          ? current.journal.map((record) => (record.id === editingJournalId ? targetRecord : record))
-          : [targetRecord, ...current.journal];
+          ? current.journal.map((record) => (record.id === editingJournalId ? nextRecord : record))
+          : [nextRecord, ...current.journal];
 
-        const nextVehicleMileageKm = targetPlan.updatedVehicleMileageKm && targetPlan.updatedVehicleMileageKm > current.vehicle.mileageKm
-          ? targetPlan.updatedVehicleMileageKm
+        const nextVehicleMileageKm = plan.updatedVehicleMileageKm && plan.updatedVehicleMileageKm > current.vehicle.mileageKm
+          ? plan.updatedVehicleMileageKm
           : current.vehicle.mileageKm;
 
-        const nextMaintenance = targetPlan.updateMaintenance
+        const nextMaintenance = plan.updateMaintenance
           ? current.maintenance.map((task) => task.id === 'to-1'
             ? {
               ...task,
-              lastDoneKm: targetRecord.mileage ?? nextVehicleMileageKm,
-              dueAtKm: targetRecord.nextMileage ?? ((targetRecord.mileage ?? nextVehicleMileageKm) + task.intervalKm),
-              notes: `Последняя замена масла: ${new Date(targetRecord.createdAt).toLocaleDateString('ru-RU')} • ${targetRecord.partName ?? recommendedOil?.label ?? 'масло уточняется'}.`,
+              lastDoneKm: nextRecord.mileage ?? nextVehicleMileageKm,
+              dueAtKm: nextRecord.nextMileage ?? ((nextRecord.mileage ?? nextVehicleMileageKm) + task.intervalKm),
+              notes: `Последняя замена масла: ${new Date(nextRecord.createdAt).toLocaleDateString('ru-RU')} • ${nextRecord.partName ?? recommendedOil?.label ?? 'масло уточняется'}.`,
               priority: 'low' as const,
             }
             : task)
           : current.maintenance;
 
-        const nextParts = targetPlan.partsToAdd.length ? [...targetPlan.partsToAdd, ...current.parts] : current.parts;
+        const nextParts = plan.partsToAdd.length ? [...plan.partsToAdd, ...current.parts] : current.parts;
 
         return {
           ...current,
@@ -513,11 +555,12 @@ function App() {
       setIsQuickEntryExpanded(false);
       setSwipedRecordId(null);
       setPendingOwnerPlan(null);
+      setSyncStatus(command === heuristicCommand ? `${plan.feedback} Сохранено без ожидания ИИ.` : `${plan.feedback} ИИ помог разобрать запись.`);
+    } catch {
+      setSyncStatus('Не удалось сохранить запись. Попробуйте еще раз.');
+    } finally {
       setIsSavingQuickEntry(false);
-      setSyncStatus(isLocalAiAvailable ? `${targetPlan.feedback} Локальный ИИ помог нормализовать команду.` : `${targetPlan.feedback} Сработал локальный разбор без ИИ.`);
-    };
-
-    applyOwnerPlan(plan, nextRecord);
+    }
   }
 
   function applyTemplateRecord(note: string) {

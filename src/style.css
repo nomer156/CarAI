@@ -1030,7 +1030,7 @@ h2 {
 }
 
 .big-add-button {
-  min-width: 160px;
+  min-width: 136px;
   width: auto;
   align-self: flex-start;
 }
@@ -1296,11 +1296,28 @@ h2 {
   .quick-entry-primary .big-add-button {
     width: auto;
     align-self: flex-start;
+    min-width: 136px;
+    max-width: 160px;
+    padding-inline: 18px;
   }
 
   .part-card-actions,
   .part-edit-actions {
-    width: auto;
-    justify-content: flex-start;
+    width: 100%;
+    justify-content: center;
+  }
+
+  .part-card,
+  .part-card .panel-heading {
+    text-align: center;
+  }
+
+  .part-card .panel-heading {
+    align-items: center;
+  }
+
+  .part-card .source-badge,
+  .part-card .status-chip {
+    margin-inline: auto;
   }
 }

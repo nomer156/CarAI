@@ -11,7 +11,7 @@
 В корне проекта:
 
 ```powershell
-$env:AI_ALLOWED_ORIGINS='https://carai.sasha20010483.workers.dev'
+$env:AI_ALLOWED_ORIGINS='https://carai2.sasha20010483.workers.dev'
 $env:AI_RATE_LIMIT_PER_MINUTE='40'
 npm run ai:server
 ```
@@ -21,7 +21,7 @@ npm run ai:server
 Пример:
 
 ```powershell
-$env:AI_ALLOWED_ORIGINS='https://carai.sasha20010483.workers.dev,https://carai.example.com'
+$env:AI_ALLOWED_ORIGINS='https://carai2.sasha20010483.workers.dev,https://carai.example.com'
 ```
 
 ## 2. Открыть backend наружу

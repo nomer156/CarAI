@@ -1,13 +1,14 @@
 import type { GarageState, JournalRecord, MaintenanceTask, Part } from '../types';
 import { resolveRecommendedOil } from '../data/carCatalog';
 
-export type OwnerCommandIntent = 'replace_oil' | 'add_part' | 'update_mileage' | 'note_only';
+export type OwnerCommandIntent = 'replace_oil' | 'add_part' | 'service_event' | 'update_mileage' | 'ask_ai' | 'note_only';
 export type RelativeDateMode = 'today' | 'yesterday' | 'specific' | 'unknown';
 
 export type NormalizedOwnerCommand = {
   intent: OwnerCommandIntent;
   rawText: string;
   normalizedText?: string;
+  answerText?: string;
   confidence: number;
   dateMode: RelativeDateMode;
   specificDate?: string;
@@ -58,6 +59,21 @@ const SELF_PART_KEYWORDS: Array<{ pattern: RegExp; name: string }> = [
   { pattern: /аккумулятор/i, name: 'Аккумулятор' },
 ];
 
+const SERVICE_EVENT_KEYWORDS: Array<{ pattern: RegExp; title: string }> = [
+  { pattern: /резин|шин|переобул|переобув|балансиров/i, title: 'Смена резины' },
+  { pattern: /сход-?развал|развал-схожд/i, title: 'Сход-развал' },
+  { pattern: /диагностик/i, title: 'Диагностика автомобиля' },
+  { pattern: /мойк.*радиатор|промыл.*радиатор/i, title: 'Обслуживание системы охлаждения' },
+  { pattern: /антифриз|охлаждающ/i, title: 'Замена охлаждающей жидкости' },
+  { pattern: /тормозн.*жидк/i, title: 'Замена тормозной жидкости' },
+  { pattern: /акпп|коробк/i, title: 'Обслуживание трансмиссии' },
+];
+
+const QUESTION_PATTERNS = [
+  /^(как|какое|какой|какую|когда|сколько|почему|зачем|где)\b/i,
+  /\b(подскажи|посоветуй|расскажи|объясни|нужно ли|надо ли|можно ли|что лучше)\b/i,
+];
+
 function normalizeOilViscosity(value?: string) {
   if (!value) return undefined;
   return value.toUpperCase().replace(/\s+/g, '').replace('-', 'W-').replace(/W$/, '');
@@ -99,6 +115,11 @@ function extractBrand(text: string) {
 function inferPartName(text: string) {
   const match = SELF_PART_KEYWORDS.find((item) => item.pattern.test(text));
   return match?.name;
+}
+
+function inferServiceEvent(text: string) {
+  const match = SERVICE_EVENT_KEYWORDS.find((item) => item.pattern.test(text));
+  return match?.title;
 }
 
 function resolveOccurredAt(command: NormalizedOwnerCommand) {
@@ -147,6 +168,19 @@ export function heuristicNormalizeOwnerCommand(input: {
   const cost = extractCost(rawText);
   const manufacturer = extractBrand(rawText);
   const partName = inferPartName(rawText);
+  const serviceEventTitle = inferServiceEvent(rawText);
+
+  if (QUESTION_PATTERNS.some((pattern) => pattern.test(rawText))) {
+    return {
+      intent: 'ask_ai',
+      rawText,
+      confidence: 0.7,
+      dateMode,
+      specificDate,
+      mileageKm,
+      category: 'manual',
+    };
+  }
 
   if (/масл|залил/i.test(lowered)) {
     return {
@@ -158,6 +192,20 @@ export function heuristicNormalizeOwnerCommand(input: {
       mileageKm,
       oilViscosity: normalizeOilViscosity(oilMatch?.[1]),
       oilBrand: manufacturer,
+      category: 'manual',
+      cost,
+    };
+  }
+
+  if (serviceEventTitle) {
+    return {
+      intent: 'service_event',
+      rawText,
+      normalizedText: serviceEventTitle,
+      confidence: 0.82,
+      dateMode,
+      specificDate,
+      mileageKm,
       category: 'manual',
       cost,
     };
@@ -241,7 +289,7 @@ export function buildOwnerExecutionPlan({ command, state, activeCarId, editingJo
       updatedVehicleMileageKm: effectiveMileage > state.vehicle.mileageKm ? effectiveMileage : undefined,
       updateMaintenance: true,
       feedback: `Запись о замене масла сохранена. ${effectiveOil ? `Использовано: ${effectiveOil}.` : ''}${recommendedOil ? ` Рекомендация для ${state.vehicle.brand} ${state.vehicle.model}: ${recommendedOil.label}.` : ''}`.trim(),
-      requiresConfirmation: inferredOil,
+      requiresConfirmation: false,
       confirmationReason: inferredOil ? 'Вязкость не указана явно в тексте. Помощник подставил рекомендованное или последнее использованное масло.' : undefined,
       summary: [
         'Действие: замена масла',
@@ -280,13 +328,39 @@ export function buildOwnerExecutionPlan({ command, state, activeCarId, editingJo
       }] : [],
       updatedVehicleMileageKm: command.mileageKm && command.mileageKm > state.vehicle.mileageKm ? command.mileageKm : undefined,
       feedback: `Запись по детали сохранена${command.shouldCreatePart ? ' и добавлена в список деталей' : ''}.`,
-      requiresConfirmation: Boolean(command.shouldCreatePart),
-      confirmationReason: command.shouldCreatePart ? 'Помощник хочет не только сохранить запись, но и добавить новую деталь в каталог без OEM.' : undefined,
+      requiresConfirmation: false,
+      confirmationReason: command.shouldCreatePart ? 'Деталь добавлена автоматически. При необходимости вы сможете отредактировать карточку позже.' : undefined,
       summary: [
         'Действие: запись по детали',
         `Дата: ${new Date(occurredAt).toLocaleDateString('ru-RU')}`,
         `Деталь: ${command.partName}`,
         `Производитель: ${command.manufacturer ?? 'не указан'}`,
+        `Пробег: ${(command.mileageKm ?? state.vehicle.mileageKm).toLocaleString('ru-RU')} км`,
+      ],
+    };
+  }
+
+  if (command.intent === 'service_event') {
+    const actionTitle = command.normalizedText?.trim() || 'Обслуживание';
+    return {
+      record: {
+        id: editingJournalId ?? `record-${Date.now()}`,
+        carId: activeCarId,
+        createdAt: occurredAt,
+        mileage: command.mileageKm ?? state.vehicle.mileageKm,
+        note: actionTitle,
+        rawNote: command.rawText,
+        category: command.category ?? 'manual',
+        cost: command.cost,
+        source: command.confidence >= 0.7 ? 'ai' : 'manual',
+      },
+      partsToAdd: [],
+      updatedVehicleMileageKm: command.mileageKm && command.mileageKm > state.vehicle.mileageKm ? command.mileageKm : undefined,
+      feedback: `Запись об обслуживании сохранена: ${actionTitle}.`,
+      summary: [
+        'Действие: сервисная запись',
+        `Дата: ${new Date(occurredAt).toLocaleDateString('ru-RU')}`,
+        `Событие: ${actionTitle}`,
         `Пробег: ${(command.mileageKm ?? state.vehicle.mileageKm).toLocaleString('ru-RU')} км`,
       ],
     };

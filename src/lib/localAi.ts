@@ -9,9 +9,10 @@ export type ParsedMaintenanceNote = {
 };
 
 export type NormalizedOwnerCommand = {
-  intent: 'replace_oil' | 'add_part' | 'update_mileage' | 'note_only';
+  intent: 'replace_oil' | 'add_part' | 'service_event' | 'update_mileage' | 'ask_ai' | 'note_only';
   rawText: string;
   normalizedText?: string;
+  answerText?: string;
   confidence: number;
   dateMode: 'today' | 'yesterday' | 'specific' | 'unknown';
   specificDate?: string;
@@ -27,9 +28,9 @@ export type NormalizedOwnerCommand = {
 };
 
 const DEFAULT_LOCAL_AI_URL = 'http://127.0.0.1:11535';
-const DEFAULT_PUBLIC_AI_URL = 'https://collaborative-pmid-cargo-llp.trycloudflare.com';
+const DEFAULT_PUBLIC_AI_URL = 'https://vpn-little-hosts-deal.trycloudflare.com';
 const LEGACY_PUBLIC_AI_URLS = [
-  'https://vpn-little-hosts-deal.trycloudflare.com',
+  'https://collaborative-pmid-cargo-llp.trycloudflare.com',
 ];
 
 function sanitizeUrl(value?: string | null) {

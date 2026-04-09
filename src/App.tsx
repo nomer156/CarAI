@@ -16,7 +16,7 @@ import { clearGarageState, loadGarageState, saveGarageState } from './lib/db';
 import { checkLocalAiHealth, getConfiguredAiBackendUrl, normalizeOwnerCommand, setConfiguredAiBackendUrl } from './lib/localAi';
 import { buildOwnerExecutionPlan, heuristicNormalizeOwnerCommand } from './lib/ownerCommandEngine';
 import type { OwnerExecutionPlan } from './lib/ownerCommandEngine';
-import type { Car, GarageState, JournalRecord, MaintenanceTask, Part, StaffMember, UserRole } from './types';
+import type { GarageState, JournalRecord, MaintenanceTask, Part, StaffMember, UserRole } from './types';
 
 type TabKey = 'overview' | 'parts' | 'maintenance' | 'history' | 'assistant';
 type ThemeMode = 'light' | 'dark';
@@ -315,39 +315,45 @@ function App() {
     setIsSettingsOpen(false);
   }
 
-  function updateActiveCar(nextCar: Car) {
-    setState((current) => ({
-      ...current,
-      activeCarId: nextCar.id,
-      vehicle: {
-        ...current.vehicle,
-        brand: nextCar.brand ?? current.vehicle.brand,
-        model: nextCar.model ?? current.vehicle.model,
-      },
-    }));
-  }
-
-  function addCarTemplate() {
-    const carId = `car-${Date.now()}`;
+  function prepareNewVehicle() {
     const brand = vehicleBrandOptions[0];
-    const nextCar: Car = {
-      id: carId,
-      name: `Моя ${brand.brand} ${brand.models[0]}`,
-      brand: brand.brand,
-      model: brand.models[0],
-    };
+    const nextCarId = state.activeCarId || `car-${Date.now()}`;
 
     setState((current) => ({
       ...current,
-      cars: [nextCar, ...current.cars],
-      activeCarId: carId,
+      cars: current.cars.length
+        ? current.cars.map((car) => car.id === nextCarId ? {
+          ...car,
+          name: `${brand.brand} ${brand.models[0]}`,
+          brand: brand.brand,
+          model: brand.models[0],
+        } : car)
+        : [{
+          id: nextCarId,
+          name: `${brand.brand} ${brand.models[0]}`,
+          brand: brand.brand,
+          model: brand.models[0],
+        }],
+      activeCarId: nextCarId,
       vehicle: {
         ...current.vehicle,
         brand: brand.brand,
         model: brand.models[0],
+        vin: '',
+        plate: '',
+        mileageKm: 0,
+        engine: '',
+        nextInspection: '',
       },
+      journal: [],
+      parts: [],
+      maintenance: current.maintenance.map((task) => ({
+        ...task,
+        lastDoneKm: 0,
+      })),
     }));
-    setSyncStatus('Добавлена новая машина для журнала.');
+    setIsVehicleEditorOpen(true);
+    setSyncStatus('Открыта чистая карточка новой машины. Заполните сведения и сохраните их.');
   }
 
   function exportRecords() {
@@ -443,6 +449,16 @@ function App() {
       }
     }
 
+    if (command.intent === 'ask_ai') {
+      const answer = command.answerText?.trim() || 'Подскажу по обслуживанию машины, когда локальный ИИ сможет ответить увереннее.';
+      setAssistantLog((current) => [...current, `Вы: ${rawNote}`, `AI: ${answer}`]);
+      setQuickEntryDraft(emptyQuickEntryDraft());
+      setIsQuickEntryExpanded(false);
+      setIsSavingQuickEntry(false);
+      setSyncStatus(answer);
+      return;
+    }
+
     const plan = buildOwnerExecutionPlan({
       command,
       state,
@@ -500,16 +516,6 @@ function App() {
       setIsSavingQuickEntry(false);
       setSyncStatus(isLocalAiAvailable ? `${targetPlan.feedback} Локальный ИИ помог нормализовать команду.` : `${targetPlan.feedback} Сработал локальный разбор без ИИ.`);
     };
-
-    if (plan.requiresConfirmation) {
-      setPendingOwnerPlan({
-        ...plan,
-        record: nextRecord,
-      });
-      setIsSavingQuickEntry(false);
-      setSyncStatus(plan.confirmationReason ?? 'Нужно подтвердить действие.');
-      return;
-    }
 
     applyOwnerPlan(plan, nextRecord);
   }
@@ -1140,7 +1146,7 @@ function App() {
 
       {showHeroCard ? <header className="hero-card">
         <div className="hero-copy"><h1>{state.role === 'owner' ? 'Машина и обслуживание в одном месте' : state.role === 'mechanic' ? 'Работы и детали в одном кабинете' : 'Команда и сервис без лишнего шума'}</h1><p className="hero-text">{syncStatus}</p><div className="hero-actions"><button className="primary-button" onClick={() => assistantRef.current?.scrollIntoView({ behavior: 'smooth' })}><Sparkles size={18} />Открыть помощника</button><button className="ghost-button" onClick={refreshCloud} disabled={!session}>Обновить</button></div></div>
-        <div className="hero-panel">{state.role === 'owner' ? <div className="vehicle-card hero-passport"><button className="passport-toggle" onClick={() => setIsPassportExpanded((current) => !current)}><div className="passport-collapsed"><div className="passport-visual" style={{ backgroundColor: carVisual.accent }}><img src={carVisual.image} alt={`${state.vehicle.brand || 'Авто'} showcase`} /></div><div><strong>{`${state.vehicle.brand} ${state.vehicle.model}`.trim() || 'Ваш автомобиль'}</strong><p>{state.vehicle.plate || 'Номер появится после заполнения профиля'}</p></div></div>{isPassportExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}</button>{isPassportExpanded && <div className="passport-expanded"><div className="vehicle-grid passport-details"><div><span>ID владельца</span><strong>{state.vehicle.ownerCode || 'Появится после регистрации'}</strong></div><div><span>VIN</span><strong>{state.vehicle.vin || 'Не указан'}</strong></div><div><span>Пробег</span><strong>{state.vehicle.mileageKm ? `${state.vehicle.mileageKm.toLocaleString('ru-RU')} км` : 'Не указан'}</strong></div><div><span>Двигатель</span><strong>{state.vehicle.engine || 'Не указан'}</strong></div><div><span>Цвет</span><strong>{state.vehicle.color}</strong></div><div><span>Осмотр</span><strong>{state.vehicle.nextInspection || 'Не указан'}</strong></div></div><div className="passport-share"><div className="owner-code-card"><strong>{state.vehicle.ownerCode || 'ID появится после регистрации'}</strong><p className="muted">Этот ID можно вводить вручную или считывать по QR.</p></div>{ownerQrCode ? <div className="qr-card"><img src={ownerQrCode} alt="QR владельца" /><p className="muted">QR с ID владельца</p></div> : null}</div><div className="panel-heading passport-edit-heading"><div><h2>Сведения об авто</h2><p className="muted">Редактирование собрано прямо внутри карточки автомобиля.</p></div><button className="ghost-button compact" onClick={() => setIsVehicleEditorOpen((current) => !current)}><Pencil size={14} />{isVehicleEditorOpen ? 'Свернуть' : 'Изменить'}</button></div>{isVehicleEditorOpen && <div className="cloud-card"><div className="assistant-input"><input value={profileName} onChange={(event) => setProfileName(event.target.value)} placeholder="Ваше имя и фамилия" /></div><div className="assistant-input"><select value={state.vehicle.brand} onChange={(event) => updateVehicleBrand(event.target.value)}><option value="">Выберите марку</option>{vehicleBrandOptions.map((option) => <option key={option.brand} value={option.brand}>{option.brand}</option>)}</select></div><div className="assistant-input"><select value={state.vehicle.model} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, model: event.target.value } }))} disabled={!state.vehicle.brand}><option value="">{state.vehicle.brand ? 'Выберите модель' : 'Сначала выберите марку'}</option>{selectedBrandOption.models.map((model) => <option key={model} value={model}>{model}</option>)}</select></div><div className="assistant-input"><input value={state.vehicle.plate} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, plate: event.target.value } }))} placeholder="Номер" /></div><div className="assistant-input"><input value={state.vehicle.vin} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, vin: event.target.value.toUpperCase() } }))} placeholder="VIN" /></div><div className="assistant-input"><input value={state.vehicle.mileageKm ? String(state.vehicle.mileageKm) : ''} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, mileageKm: Number.parseInt(event.target.value, 10) || 0 } }))} placeholder="Пробег" /></div><div className="assistant-input"><input value={state.vehicle.engine} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, engine: event.target.value } }))} placeholder="Двигатель" /></div><button className="primary-button" onClick={() => { setState((current) => ({ ...current, ownerName: profileName.trim() })); setSyncStatus('Изменения автомобиля сохранены локально.'); setIsVehicleEditorOpen(false); }}>Сохранить сведения</button></div>}</div>}</div> : <div className="vehicle-card"><div className="vehicle-title">{state.role === 'mechanic' ? <Wrench size={20} /> : <Users size={20} />}<strong>{state.serviceCenter.name || 'СТО появится после регистрации'}</strong></div><p>{state.serviceCenter.city || 'Сначала завершите профиль'}</p><div className="vehicle-grid"><div><span>Постов</span><strong>{state.serviceCenter.bays || '—'}</strong></div><div><span>Ожидают механика</span><strong>{state.staff.filter((item) => item.role === 'mechanic' && item.approvalStatus === 'pending').length}</strong></div></div></div>}</div>
+        <div className="hero-panel">{state.role === 'owner' ? <div className="vehicle-card hero-passport"><button className="passport-toggle" onClick={() => setIsPassportExpanded((current) => !current)}><div className="passport-collapsed"><div className="passport-visual" style={{ backgroundColor: carVisual.accent }}><img src={carVisual.image} alt={`${state.vehicle.brand || 'Авто'} showcase`} /></div><div><strong>{`${state.vehicle.brand} ${state.vehicle.model}`.trim() || 'Ваш автомобиль'}</strong><p>{state.vehicle.plate || 'Номер появится после заполнения профиля'}</p></div></div>{isPassportExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}</button>{isPassportExpanded && <div className="passport-expanded"><div className="vehicle-grid passport-details"><div><span>ID владельца</span><strong>{state.vehicle.ownerCode || 'Появится после регистрации'}</strong></div><div><span>VIN</span><strong>{state.vehicle.vin || 'Не указан'}</strong></div><div><span>Пробег</span><strong>{state.vehicle.mileageKm ? `${state.vehicle.mileageKm.toLocaleString('ru-RU')} км` : 'Не указан'}</strong></div><div><span>Двигатель</span><strong>{state.vehicle.engine || 'Не указан'}</strong></div><div><span>Цвет</span><strong>{state.vehicle.color}</strong></div><div><span>Осмотр</span><strong>{state.vehicle.nextInspection || 'Не указан'}</strong></div></div><div className="passport-share"><div className="owner-code-card"><strong>{state.vehicle.ownerCode || 'ID появится после регистрации'}</strong><p className="muted">Этот ID можно вводить вручную или считывать по QR.</p></div>{ownerQrCode ? <div className="qr-card"><img src={ownerQrCode} alt="QR владельца" /><p className="muted">QR с ID владельца</p></div> : null}</div><div className="panel-heading passport-edit-heading"><div><h2>Сведения об авто</h2><p className="muted">Редактирование собрано прямо внутри карточки автомобиля.</p></div><div className="owner-overview-actions"><button className="ghost-button compact" onClick={prepareNewVehicle}><CarFront size={14} />Новая машина</button><button className="ghost-button compact" onClick={() => setIsVehicleEditorOpen((current) => !current)}><Pencil size={14} />{isVehicleEditorOpen ? 'Свернуть' : 'Изменить'}</button></div></div>{isVehicleEditorOpen && <div className="cloud-card"><div className="assistant-input"><input value={profileName} onChange={(event) => setProfileName(event.target.value)} placeholder="Ваше имя и фамилия" /></div><div className="assistant-input"><select value={state.vehicle.brand} onChange={(event) => updateVehicleBrand(event.target.value)}><option value="">Выберите марку</option>{vehicleBrandOptions.map((option) => <option key={option.brand} value={option.brand}>{option.brand}</option>)}</select></div><div className="assistant-input"><select value={state.vehicle.model} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, model: event.target.value } }))} disabled={!state.vehicle.brand}><option value="">{state.vehicle.brand ? 'Выберите модель' : 'Сначала выберите марку'}</option>{selectedBrandOption.models.map((model) => <option key={model} value={model}>{model}</option>)}</select></div><div className="assistant-input"><input value={state.vehicle.plate} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, plate: event.target.value } }))} placeholder="Номер" /></div><div className="assistant-input"><input value={state.vehicle.vin} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, vin: event.target.value.toUpperCase() } }))} placeholder="VIN" /></div><div className="assistant-input"><input value={state.vehicle.mileageKm ? String(state.vehicle.mileageKm) : ''} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, mileageKm: Number.parseInt(event.target.value, 10) || 0 } }))} placeholder="Пробег" /></div><div className="assistant-input"><input value={state.vehicle.engine} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, engine: event.target.value } }))} placeholder="Двигатель" /></div><button className="primary-button" onClick={() => { setState((current) => ({ ...current, ownerName: profileName.trim() })); setSyncStatus('Изменения автомобиля сохранены локально.'); setIsVehicleEditorOpen(false); }}>Сохранить сведения</button></div>}</div>}</div> : <div className="vehicle-card"><div className="vehicle-title">{state.role === 'mechanic' ? <Wrench size={20} /> : <Users size={20} />}<strong>{state.serviceCenter.name || 'СТО появится после регистрации'}</strong></div><p>{state.serviceCenter.city || 'Сначала завершите профиль'}</p><div className="vehicle-grid"><div><span>Постов</span><strong>{state.serviceCenter.bays || '—'}</strong></div><div><span>Ожидают механика</span><strong>{state.staff.filter((item) => item.role === 'mechanic' && item.approvalStatus === 'pending').length}</strong></div></div></div>}</div>
       </header> : null}
 
       <nav className="tabs tabs-top">{tabs.map((tab) => <button key={tab} className={activeTab === tab ? 'active' : ''} onClick={() => setActiveTab(tab)}>{tabLabels[tab]}</button>)}</nav>
@@ -1161,17 +1167,6 @@ function App() {
                   <h2>Быстрая запись</h2>
                   <p className="muted">Одна строка, минимум тапов. ИИ может помочь позже, но запись уже сейчас полностью работает сама по себе.</p>
                 </div>
-              </div>
-              <div className="owner-overview-actions owner-entry-actions">
-                <div className="assistant-input car-selector">
-                  <select value={activeCar?.id} onChange={(event) => {
-                    const nextCar = state.cars.find((car) => car.id === event.target.value);
-                    if (nextCar) updateActiveCar(nextCar);
-                  }}>
-                    {state.cars.map((car) => <option key={car.id} value={car.id}>{car.name}</option>)}
-                  </select>
-                </div>
-                <button className="ghost-button compact" onClick={addCarTemplate}><CarFront size={14} />Новая машина</button>
               </div>
               <div className="quick-entry-shell">
                 {pendingOwnerPlan ? (

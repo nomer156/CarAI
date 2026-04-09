@@ -1,5 +1,5 @@
 param(
-  [string]$AllowedOrigins = "https://carai.sasha20010483.workers.dev,https://carai2.sasha20010483.workers.dev",
+  [string]$AllowedOrigins = "https://carai.sasha20010483.workers.dev,https://carai2.sasha20010483.workers.dev,https://car-ai-three.vercel.app",
   [string]$RateLimitPerMinute = "40"
 )
 

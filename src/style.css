@@ -422,6 +422,13 @@ h2 {
   flex-wrap: wrap;
 }
 
+.onboarding-status {
+  margin: 0;
+  padding: 0.85rem 1rem;
+  border-radius: 16px;
+  background: rgba(148, 163, 184, 0.12);
+}
+
 .segmented button.active,
 .tabs button.active,
 .verify-button.is-verified {

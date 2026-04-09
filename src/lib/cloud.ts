@@ -164,6 +164,10 @@ export function humanizeCloudError(error: unknown) {
     return 'Такие данные уже существуют. Проверьте VIN, номер или повторите попытку с другими значениями.';
   }
 
+  if (message.includes('invalid input syntax for type date')) {
+    return 'Дата осмотра заполнена неверно. Используйте формат ГГГГ-ММ-ДД или оставьте поле пустым.';
+  }
+
   if (message.includes('infinite recursion detected in policy')) {
     return 'В базе еще не применено исправление прав доступа. Выполните последний SQL-файл в Supabase.';
   }
@@ -609,7 +613,7 @@ export async function saveOwnerProfile(input: {
   mileageKm: number;
   engine: string;
   color: string;
-  nextInspection: string;
+  nextInspection?: string | null;
 }) {
   if (!supabase || !isSupabaseEnabled) {
     throw new Error('Supabase is not configured.');
@@ -621,11 +625,11 @@ export async function saveOwnerProfile(input: {
     vehicle_model: input.model,
     vehicle_year: input.year,
     vehicle_vin: input.vin,
-    vehicle_plate: input.plate,
+    vehicle_plate: input.plate.trim() || null,
     vehicle_mileage_km: input.mileageKm,
-    vehicle_engine: input.engine,
+    vehicle_engine: input.engine.trim() || null,
     vehicle_color: input.color,
-    vehicle_next_inspection: input.nextInspection,
+    vehicle_next_inspection: input.nextInspection?.trim() ? input.nextInspection.trim() : null,
   });
 
   if (error) {

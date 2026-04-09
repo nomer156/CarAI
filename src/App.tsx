@@ -1121,6 +1121,7 @@ function App() {
               <div className="hero-actions">
                 <button className="primary-button" onClick={finishOnboarding} disabled={isSavingProfile || !profileName.trim() || (state.role === 'owner' && (!state.vehicle.brand || !state.vehicle.model)) || ((state.role === 'service_admin' || state.role === 'company_admin') && !serviceCenterName.trim())}>{isSavingProfile ? 'Сохраняем...' : 'Сохранить профиль'}</button>
               </div>
+              <p className="muted onboarding-status">{syncStatus}</p>
             </div>
           </section>
         </section>

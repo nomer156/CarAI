@@ -6,19 +6,23 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview",
+    "preview": "npm run build && wrangler dev",
+    "preview:vite": "vite preview",
     "ai:server": "node local-ai/server.mjs",
     "ai:tunnel:quick": "powershell -NoProfile -Command \"& 'C:\\Program Files (x86)\\cloudflared\\cloudflared.exe' tunnel --url http://127.0.0.1:11535\"",
-    "ai:public": "powershell -ExecutionPolicy Bypass -File scripts/start-public-ai.ps1"
+    "ai:public": "powershell -ExecutionPolicy Bypass -File scripts/start-public-ai.ps1",
+    "deploy": "npm run build && wrangler deploy"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.31.1",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
     "pg": "^8.20.0",
     "typescript": "~6.0.2",
-    "vite": "^8.0.4"
+    "vite": "^8.0.4",
+    "wrangler": "^4.81.0"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.101.1",

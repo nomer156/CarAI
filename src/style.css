@@ -723,10 +723,13 @@ h2 {
 
 .parts-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  justify-items: center;
 }
 
 .part-card,
 .maintenance-card {
+  width: 100%;
+  max-width: 560px;
   padding: 18px;
   border-radius: 20px;
   border: 1px solid var(--border);
@@ -995,6 +998,7 @@ h2 {
 .owner-entry-actions {
   margin-bottom: 18px;
   justify-content: flex-start;
+  align-items: center;
 }
 
 .owner-entry-actions > * {
@@ -1027,6 +1031,8 @@ h2 {
 
 .big-add-button {
   min-width: 160px;
+  width: auto;
+  align-self: flex-start;
 }
 
 .inline-toggle {
@@ -1115,6 +1121,11 @@ h2 {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.part-card .ghost-button.compact,
+.part-card .primary-button.compact {
+  width: auto;
 }
 
 .onboarding-screen {
@@ -1273,9 +1284,23 @@ h2 {
     width: 100%;
   }
 
+  .owner-entry-actions {
+    align-items: stretch;
+  }
+
+  .owner-entry-actions .ghost-button {
+    width: auto;
+    align-self: flex-start;
+  }
+
+  .quick-entry-primary .big-add-button {
+    width: auto;
+    align-self: flex-start;
+  }
+
   .part-card-actions,
   .part-edit-actions {
-    width: 100%;
+    width: auto;
     justify-content: flex-start;
   }
 }

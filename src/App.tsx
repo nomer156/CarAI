@@ -77,6 +77,14 @@ function emptyPartDraft(): PartDraft {
   return { name: '', oem: '', manufacturer: '', price: '', note: '' };
 }
 
+function formatAiBackendLabel(value: string) {
+  try {
+    return new URL(value).hostname;
+  } catch {
+    return value;
+  }
+}
+
 function generateStableVin(seed: string) {
   const alphabet = 'ABCDEFGHJKLMNPRSTUVWXYZ0123456789';
   const compact = seed.replace(/[^A-Za-z0-9]/g, '').toUpperCase() || 'CODEXCARSEED';
@@ -172,10 +180,10 @@ function App() {
       if (!result.ok) throw new Error('Local AI unavailable');
       setAiBackendUrl(result.url);
       setIsLocalAiAvailable(true);
-      setLocalAiStatus(`AI backend подключен: ${result.model}. URL: ${result.url}`);
+      setLocalAiStatus(`Подключен ${result.model}. Backend: ${formatAiBackendLabel(result.url)}.`);
     } catch {
       setIsLocalAiAvailable(false);
-      setLocalAiStatus(`AI backend недоступен. После перезапуска tunnel URL может измениться, поэтому проверьте адрес в разделе "Локальный ИИ".`);
+      setLocalAiStatus('ИИ сейчас недоступен. После перезапуска tunnel URL может измениться, поэтому проверьте адрес ниже.');
     }
   }
 
@@ -1297,11 +1305,12 @@ function App() {
                 <span className={`source-badge ${isLocalAiAvailable ? 'service' : 'neutral'}`}>{isLocalAiAvailable ? 'Подключен' : 'Недоступен'}</span>
                 <p className="muted">{localAiStatus}</p>
                 <p className="muted">Если ИИ недоступен, запись все равно сохраняется локально как обычная заметка.</p>
+                <span className="source-badge neutral">Backend: {formatAiBackendLabel(aiBackendUrl)}</span>
                 <div className="assistant-input">
                   <input value={aiBackendUrl} onChange={(event) => setAiBackendUrl(event.target.value)} placeholder="http://127.0.0.1:11535 или https://your-ai.example.com" />
                   <button className="ghost-button" onClick={() => { void refreshAiHealth(aiBackendUrl); }}>Проверить URL</button>
                 </div>
-                <p className="muted">Можно оставить `localhost` для работы на вашем ПК или указать публичный tunnel URL для тестеров.</p>
+                <p className="muted">Если вы перезапускали терминал с `ai:public`, tunnel URL может поменяться. Для тестеров вставьте новый адрес сюда и нажмите `Проверить URL`.</p>
               </div>
             </article>
             <article className="panel">

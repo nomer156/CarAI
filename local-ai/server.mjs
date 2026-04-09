@@ -4,11 +4,48 @@ const HOST = '127.0.0.1';
 const PORT = 11535;
 const OLLAMA_URL = 'http://127.0.0.1:11434/api/chat';
 const MODEL = process.env.OLLAMA_MODEL || 'qwen2.5:7b-instruct';
+const ALLOWED_ORIGINS = (process.env.AI_ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean);
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX_REQUESTS = Number.parseInt(process.env.AI_RATE_LIMIT_PER_MINUTE || '40', 10) || 40;
+const requestBuckets = new Map();
 
-function sendJson(response, statusCode, payload) {
+function resolveCorsOrigin(request) {
+  const origin = request.headers.origin;
+  if (!origin) return '*';
+  if (!ALLOWED_ORIGINS.length) return origin;
+  return ALLOWED_ORIGINS.includes(origin) ? origin : '';
+}
+
+function getClientAddress(request) {
+  return request.headers['cf-connecting-ip']
+    || request.headers['x-forwarded-for']?.split(',')[0]?.trim()
+    || request.socket.remoteAddress
+    || 'unknown';
+}
+
+function isRateLimited(request) {
+  const key = getClientAddress(request);
+  const now = Date.now();
+  const bucket = requestBuckets.get(key);
+
+  if (!bucket || now - bucket.startedAt > RATE_LIMIT_WINDOW_MS) {
+    requestBuckets.set(key, { startedAt: now, count: 1 });
+    return false;
+  }
+
+  bucket.count += 1;
+  requestBuckets.set(key, bucket);
+  return bucket.count > RATE_LIMIT_MAX_REQUESTS;
+}
+
+function sendJson(request, response, statusCode, payload) {
+  const corsOrigin = resolveCorsOrigin(request);
   response.writeHead(statusCode, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Origin': corsOrigin || 'null',
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
   });
@@ -159,17 +196,32 @@ async function normalizeCommandWithOllama(body) {
 
 const server = http.createServer(async (request, response) => {
   if (!request.url) {
-    sendJson(response, 400, { error: 'Missing URL' });
+    sendJson(request, response, 400, { error: 'Missing URL' });
     return;
   }
 
   if (request.method === 'OPTIONS') {
-    sendJson(response, 200, { ok: true });
+    sendJson(request, response, 200, { ok: true });
+    return;
+  }
+
+  if (resolveCorsOrigin(request) === '') {
+    sendJson(request, response, 403, { error: 'Origin is not allowed' });
+    return;
+  }
+
+  if (request.method === 'POST' && isRateLimited(request)) {
+    sendJson(request, response, 429, { error: 'Rate limit exceeded' });
     return;
   }
 
   if (request.method === 'GET' && request.url === '/health') {
-    sendJson(response, 200, { ok: true, model: MODEL });
+    sendJson(request, response, 200, {
+      ok: true,
+      model: MODEL,
+      allowedOrigins: ALLOWED_ORIGINS,
+      rateLimitPerMinute: RATE_LIMIT_MAX_REQUESTS,
+    });
     return;
   }
 
@@ -183,9 +235,9 @@ const server = http.createServer(async (request, response) => {
       try {
         const body = raw ? JSON.parse(raw) : {};
         const parsed = await parseRecordWithOllama(body);
-        sendJson(response, 200, parsed);
+        sendJson(request, response, 200, parsed);
       } catch (error) {
-        sendJson(response, 500, {
+        sendJson(request, response, 500, {
           error: error instanceof Error ? error.message : 'Failed to parse record',
         });
       }
@@ -203,9 +255,9 @@ const server = http.createServer(async (request, response) => {
       try {
         const body = raw ? JSON.parse(raw) : {};
         const parsed = await normalizeCommandWithOllama(body);
-        sendJson(response, 200, parsed);
+        sendJson(request, response, 200, parsed);
       } catch (error) {
-        sendJson(response, 500, {
+        sendJson(request, response, 500, {
           error: error instanceof Error ? error.message : 'Failed to normalize command',
         });
       }
@@ -213,7 +265,7 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
-  sendJson(response, 404, { error: 'Not found' });
+  sendJson(request, response, 404, { error: 'Not found' });
 });
 
 server.listen(PORT, HOST, () => {

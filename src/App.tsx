@@ -13,7 +13,7 @@ import {
   signInWithGoogle, signOutCloud, subscribeToAuthChanges, updateServiceQueueStatus, upsertVehiclePart,
 } from './lib/cloud';
 import { clearGarageState, loadGarageState, saveGarageState } from './lib/db';
-import { checkLocalAiHealth, normalizeOwnerCommand } from './lib/localAi';
+import { checkLocalAiHealth, getConfiguredAiBackendUrl, normalizeOwnerCommand, setConfiguredAiBackendUrl } from './lib/localAi';
 import { buildOwnerExecutionPlan, heuristicNormalizeOwnerCommand } from './lib/ownerCommandEngine';
 import type { OwnerExecutionPlan } from './lib/ownerCommandEngine';
 import type { Car, GarageState, JournalRecord, MaintenanceTask, Part, StaffMember, UserRole } from './types';
@@ -121,6 +121,7 @@ function App() {
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
   const [isLocalAiAvailable, setIsLocalAiAvailable] = useState(false);
   const [localAiStatus, setLocalAiStatus] = useState('Локальный ИИ не проверялся.');
+  const [aiBackendUrl, setAiBackendUrl] = useState(() => getConfiguredAiBackendUrl());
   const [quickCommand, setQuickCommand] = useState('');
   const [assistantInput, setAssistantInput] = useState('');
   const [assistantLog, setAssistantLog] = useState<string[]>(['Помощник готов к быстрым командам.']);
@@ -159,17 +160,25 @@ function App() {
     }
   }, [state.role, state.ownerName, state.mechanicName, state.serviceCenter.name, state.serviceCenter.city, state.serviceCenter.bays]);
   useEffect(() => { saveGarageState(state).catch(() => undefined); }, [state]);
+  async function refreshAiHealth(targetUrl?: string) {
+    if (targetUrl !== undefined) {
+      setConfiguredAiBackendUrl(targetUrl);
+      setAiBackendUrl(getConfiguredAiBackendUrl());
+    }
+
+    try {
+      const result = await checkLocalAiHealth();
+      if (!result.ok) throw new Error('Local AI unavailable');
+      setIsLocalAiAvailable(true);
+      setLocalAiStatus(`AI backend подключен: ${result.model}. URL: ${getConfiguredAiBackendUrl()}`);
+    } catch {
+      setIsLocalAiAvailable(false);
+      setLocalAiStatus(`AI backend недоступен по адресу ${getConfiguredAiBackendUrl()}. Запустите локальный сервер или укажите публичный tunnel URL.`);
+    }
+  }
+
   useEffect(() => {
-    checkLocalAiHealth()
-      .then((result) => {
-        if (!result.ok) throw new Error('Local AI unavailable');
-        setIsLocalAiAvailable(true);
-        setLocalAiStatus(`Локальный ИИ подключен: ${result.model}.`);
-      })
-      .catch(() => {
-        setIsLocalAiAvailable(false);
-        setLocalAiStatus('Локальный ИИ недоступен. Запустите `npm run ai:server` на этом ПК.');
-      });
+    void refreshAiHealth();
   }, []);
   useEffect(() => {
     const code = state.vehicle.ownerCode || session?.user?.id || '';
@@ -1265,6 +1274,11 @@ function App() {
                 <span className={`source-badge ${isLocalAiAvailable ? 'service' : 'neutral'}`}>{isLocalAiAvailable ? 'Подключен' : 'Недоступен'}</span>
                 <p className="muted">{localAiStatus}</p>
                 <p className="muted">Если ИИ недоступен, запись все равно сохраняется локально как обычная заметка.</p>
+                <div className="assistant-input">
+                  <input value={aiBackendUrl} onChange={(event) => setAiBackendUrl(event.target.value)} placeholder="http://127.0.0.1:11535 или https://your-ai.example.com" />
+                  <button className="ghost-button" onClick={() => { void refreshAiHealth(aiBackendUrl); }}>Проверить URL</button>
+                </div>
+                <p className="muted">Можно оставить `localhost` для работы на вашем ПК или указать публичный tunnel URL для тестеров.</p>
               </div>
             </article>
             <article className="panel">

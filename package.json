@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "ai:server": "node local-ai/server.mjs"
+    "ai:server": "node local-ai/server.mjs",
+    "ai:tunnel:quick": "\"C:\\Program Files (x86)\\cloudflared\\cloudflared.exe\" tunnel --url http://127.0.0.1:11535",
+    "ai:public": "powershell -ExecutionPolicy Bypass -File scripts/start-public-ai.ps1"
   },
   "devDependencies": {
     "@types/qrcode": "^1.5.6",

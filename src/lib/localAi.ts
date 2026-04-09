@@ -26,14 +26,36 @@ export type NormalizedOwnerCommand = {
   shouldCreatePart?: boolean;
 };
 
-const LOCAL_AI_URL = 'http://127.0.0.1:11535';
+const DEFAULT_LOCAL_AI_URL = 'http://127.0.0.1:11535';
+
+function sanitizeUrl(value?: string | null) {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  return trimmed.replace(/\/+$/, '');
+}
+
+export function getConfiguredAiBackendUrl() {
+  const runtimeOverride = sanitizeUrl(window.localStorage.getItem('codexcar-ai-backend-url'));
+  const envUrl = sanitizeUrl(import.meta.env.VITE_AI_BACKEND_URL);
+  return runtimeOverride ?? envUrl ?? DEFAULT_LOCAL_AI_URL;
+}
+
+export function setConfiguredAiBackendUrl(url: string) {
+  const normalized = sanitizeUrl(url);
+  if (!normalized) {
+    window.localStorage.removeItem('codexcar-ai-backend-url');
+    return;
+  }
+  window.localStorage.setItem('codexcar-ai-backend-url', normalized);
+}
 
 async function request<T>(path: string, init?: RequestInit, timeoutMs = 12000): Promise<T> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  const aiBaseUrl = getConfiguredAiBackendUrl();
 
   try {
-    const response = await fetch(`${LOCAL_AI_URL}${path}`, {
+    const response = await fetch(`${aiBaseUrl}${path}`, {
       ...init,
       signal: controller.signal,
     });

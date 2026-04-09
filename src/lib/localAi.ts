@@ -27,6 +27,7 @@ export type NormalizedOwnerCommand = {
 };
 
 const DEFAULT_LOCAL_AI_URL = 'http://127.0.0.1:11535';
+const DEFAULT_PUBLIC_AI_URL = 'https://vpn-little-hosts-deal.trycloudflare.com';
 
 function sanitizeUrl(value?: string | null) {
   const trimmed = value?.trim();
@@ -37,7 +38,9 @@ function sanitizeUrl(value?: string | null) {
 export function getConfiguredAiBackendUrl() {
   const runtimeOverride = sanitizeUrl(window.localStorage.getItem('codexcar-ai-backend-url'));
   const envUrl = sanitizeUrl(import.meta.env.VITE_AI_BACKEND_URL);
-  return runtimeOverride ?? envUrl ?? DEFAULT_LOCAL_AI_URL;
+  const host = window.location.hostname;
+  const isLocalHost = host === 'localhost' || host === '127.0.0.1';
+  return runtimeOverride ?? envUrl ?? (isLocalHost ? DEFAULT_LOCAL_AI_URL : DEFAULT_PUBLIC_AI_URL);
 }
 
 export function setConfiguredAiBackendUrl(url: string) {

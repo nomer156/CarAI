@@ -69,6 +69,21 @@ function sanitizeParsedPayload(input) {
 }
 
 function sanitizeNormalizedCommand(input, fallbackText) {
+  const cleanString = (value) => {
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim();
+    if (!trimmed || trimmed === '?' || trimmed === '-' || trimmed.toLowerCase() === 'null') return undefined;
+    return trimmed;
+  };
+
+  const cleanMaybeQuestionable = (value) => {
+    const normalized = cleanString(value);
+    if (!normalized) return undefined;
+    return normalized.endsWith('?') ? normalized.slice(0, -1).trim() || undefined : normalized;
+  };
+
+  const cleanPositiveNumber = (value) => (Number.isFinite(value) && Number(value) > 0 ? Number(value) : undefined);
+
   if (!input || typeof input !== 'object') {
     return {
       intent: 'note_only',
@@ -78,21 +93,26 @@ function sanitizeNormalizedCommand(input, fallbackText) {
     };
   }
 
+  const fallbackLower = String(fallbackText || '').toLowerCase();
+  const intent = ['replace_oil', 'add_part', 'update_mileage', 'note_only'].includes(input.intent) ? input.intent : 'note_only';
+  const oilBrand = cleanMaybeQuestionable(input.oilBrand);
+  const manufacturer = cleanMaybeQuestionable(input.manufacturer);
+
   return {
-    intent: ['replace_oil', 'add_part', 'update_mileage', 'note_only'].includes(input.intent) ? input.intent : 'note_only',
-    rawText: typeof input.rawText === 'string' && input.rawText.trim() ? input.rawText.trim() : fallbackText,
-    normalizedText: typeof input.normalizedText === 'string' ? input.normalizedText.trim() : undefined,
+    intent,
+    rawText: cleanString(input.rawText) || fallbackText,
+    normalizedText: cleanString(input.normalizedText),
     confidence: Number.isFinite(input.confidence) ? Math.max(0, Math.min(1, Number(input.confidence))) : 0.4,
     dateMode: ['today', 'yesterday', 'specific', 'unknown'].includes(input.dateMode) ? input.dateMode : 'unknown',
-    specificDate: typeof input.specificDate === 'string' ? input.specificDate.trim() : undefined,
-    mileageKm: Number.isFinite(input.mileageKm) ? Number(input.mileageKm) : undefined,
-    oilViscosity: typeof input.oilViscosity === 'string' ? input.oilViscosity.trim().toUpperCase() : undefined,
-    oilBrand: typeof input.oilBrand === 'string' ? input.oilBrand.trim() : undefined,
-    partName: typeof input.partName === 'string' ? input.partName.trim() : undefined,
-    manufacturer: typeof input.manufacturer === 'string' ? input.manufacturer.trim() : undefined,
-    category: typeof input.category === 'string' ? input.category.trim() : 'manual',
-    cost: Number.isFinite(input.cost) ? Number(input.cost) : undefined,
-    nextMileage: Number.isFinite(input.nextMileage) ? Number(input.nextMileage) : undefined,
+    specificDate: input.dateMode === 'specific' ? cleanString(input.specificDate) : undefined,
+    mileageKm: cleanPositiveNumber(input.mileageKm),
+    oilViscosity: cleanString(input.oilViscosity)?.toUpperCase(),
+    oilBrand: intent === 'replace_oil' && oilBrand && fallbackLower.includes(oilBrand.toLowerCase()) ? oilBrand : undefined,
+    partName: intent === 'add_part' ? cleanString(input.partName) : undefined,
+    manufacturer: intent === 'add_part' && manufacturer && fallbackLower.includes(manufacturer.toLowerCase()) ? manufacturer : undefined,
+    category: cleanString(input.category) || 'manual',
+    cost: cleanPositiveNumber(input.cost),
+    nextMileage: cleanPositiveNumber(input.nextMileage),
     shouldCreatePart: Boolean(input.shouldCreatePart),
   };
 }

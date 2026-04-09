@@ -106,7 +106,7 @@ function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
-  const [syncStatus, setSyncStatus] = useState(isSupabaseEnabled ? 'Готово к входу через Google.' : 'Демо-режим');
+  const [syncStatus, setSyncStatus] = useState(isSupabaseEnabled ? 'Войдите через Google, чтобы открыть профиль и автомобиль.' : 'Облако не настроено.');
   const [hasCloudProfile, setHasCloudProfile] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isPassportExpanded, setIsPassportExpanded] = useState(false);
@@ -125,15 +125,15 @@ function App() {
   const [quickCommand, setQuickCommand] = useState('');
   const [assistantInput, setAssistantInput] = useState('');
   const [assistantLog, setAssistantLog] = useState<string[]>(['Помощник готов к быстрым командам.']);
-  const [profileName, setProfileName] = useState('Алексей Ковалев');
-  const [serviceCenterName, setServiceCenterName] = useState('Nord Garage');
-  const [serviceCenterCity, setServiceCenterCity] = useState('Москва');
-  const [serviceCenterBays, setServiceCenterBays] = useState('6');
+  const [profileName, setProfileName] = useState('');
+  const [serviceCenterName, setServiceCenterName] = useState('');
+  const [serviceCenterCity, setServiceCenterCity] = useState('');
+  const [serviceCenterBays, setServiceCenterBays] = useState('');
   const [ownerPartDraft, setOwnerPartDraft] = useState<PartDraft>(emptyPartDraft());
   const [servicePartDraft, setServicePartDraft] = useState<PartDraft>(emptyPartDraft());
   const [editingPartId, setEditingPartId] = useState<string | null>(null);
   const [editingPartDraft, setEditingPartDraft] = useState<PartDraft>(emptyPartDraft());
-  const [employeeDraft, setEmployeeDraft] = useState({ name: '', role: 'mechanic' as StaffRoleOption, specialization: '', shift: '09:00 - 18:00', workplace: 'Москва, ул. Шипиловская, 12', salaryRub: '90000' });
+  const [employeeDraft, setEmployeeDraft] = useState({ name: '', role: 'mechanic' as StaffRoleOption, specialization: '', shift: '', workplace: '', salaryRub: '' });
   const [clientLookupCode, setClientLookupCode] = useState('');
   const [ownerQrCode, setOwnerQrCode] = useState('');
   const [isScanningQr, setIsScanningQr] = useState(false);
@@ -153,10 +153,10 @@ function App() {
     if (state.role === 'owner') setProfileName(state.ownerName);
     if (state.role === 'mechanic') setProfileName(state.mechanicName);
     if (state.role === 'service_admin' || state.role === 'company_admin') {
-      setProfileName(state.role === 'service_admin' ? 'Админ СТО' : 'Модератор');
+      setProfileName('');
       setServiceCenterName(state.serviceCenter.name);
       setServiceCenterCity(state.serviceCenter.city);
-      setServiceCenterBays(String(state.serviceCenter.bays));
+      setServiceCenterBays(state.serviceCenter.bays ? String(state.serviceCenter.bays) : '');
     }
   }, [state.role, state.ownerName, state.mechanicName, state.serviceCenter.name, state.serviceCenter.city, state.serviceCenter.bays]);
   useEffect(() => { saveGarageState(state).catch(() => undefined); }, [state]);
@@ -199,30 +199,39 @@ function App() {
     if (!isSupabaseEnabled) return;
     getCurrentSession().then(async (next) => {
       setSession(next);
-      if (!next) { setIsAuthReady(true); return; }
+      if (!next) { setState(demoState); setHasCloudProfile(false); setIsAuthReady(true); return; }
       const cloudState = await loadGarageStateFromCloud();
       if (cloudState) {
         setState((current) => ({ ...cloudState, cars: current.cars, activeCarId: current.activeCarId, journal: current.journal }));
         setHasCloudProfile(true);
         setSyncStatus('Профиль загружен из облака.');
+      } else {
+        setState(demoState);
+        setProfileName(next.user?.user_metadata?.full_name ?? '');
+        setHasCloudProfile(false);
       }
       setIsAuthReady(true);
     }).catch((error: Error) => setSyncStatus(humanizeCloudError(error)));
     return subscribeToAuthChanges((next) => {
       setSession(next);
-      if (!next?.user?.email) { setHasCloudProfile(false); setSyncStatus('Вы не вошли.'); setIsAuthReady(true); return; }
+      if (!next?.user?.email) { setState(demoState); setHasCloudProfile(false); setSyncStatus('Вы не вошли.'); setIsAuthReady(true); return; }
       setIsAuthReady(true);
       setSyncStatus(`Вы вошли как ${next.user.email}.`);
       void loadGarageStateFromCloud().then((cloudState) => {
         if (cloudState) {
           setState((current) => ({ ...cloudState, cars: current.cars, activeCarId: current.activeCarId, journal: current.journal }));
           setHasCloudProfile(true);
+        } else {
+          setState(demoState);
+          setProfileName(next.user?.user_metadata?.full_name ?? '');
+          setHasCloudProfile(false);
         }
       }).catch((error) => setSyncStatus(humanizeCloudError(error)));
     });
   }, []);
 
   const roleLabel = state.role === 'owner' ? 'Владелец' : state.role === 'mechanic' ? 'Механик' : state.role === 'service_admin' ? 'Админ СТО' : 'Модератор';
+  const topRoleLabel = session ? roleLabel : 'Гость';
   const activeCar = state.cars.find((car) => car.id === state.activeCarId) ?? state.cars[0];
   const ownerTimeline = state.journal
     .filter((record) => record.carId === (activeCar?.id ?? state.activeCarId))
@@ -231,15 +240,16 @@ function App() {
   const selectedBrandOption = vehicleBrandOptions.find((item) => item.brand === state.vehicle.brand) ?? vehicleBrandOptions[0];
   const tabs = state.role === 'owner' ? ownerTabs : state.role === 'mechanic' ? mechanicTabs : adminTabs;
   const showOnboarding = isAuthReady && Boolean(session) && !hasCloudProfile;
-  const allowRoleSwitchInSettings = !session;
   const showHeroCard = state.role !== 'owner' || activeTab === 'overview';
-  const currentDisplayName = hasCloudProfile
-    ? state.role === 'owner'
-      ? state.ownerName
-      : state.role === 'mechanic'
-        ? state.mechanicName
-        : profileName
-    : session?.user?.user_metadata?.full_name ?? profileName;
+  const currentDisplayName = session
+    ? hasCloudProfile
+      ? state.role === 'owner'
+        ? state.ownerName
+        : state.role === 'mechanic'
+          ? state.mechanicName
+          : profileName
+      : session.user?.user_metadata?.full_name ?? profileName
+    : 'Войдите через Google';
   const tabLabels =
     state.role === 'owner'
       ? { overview: 'Лента', parts: 'Детали', maintenance: 'ТО', history: 'Сервис', assistant: 'Локальный ИИ' }
@@ -283,8 +293,8 @@ function App() {
   function mergeLocalOwnerState(current: GarageState, cloudState: GarageState) {
     return {
       ...cloudState,
-      cars: current.cars,
-      activeCarId: current.activeCarId,
+      cars: current.cars.length ? current.cars : cloudState.cars,
+      activeCarId: current.activeCarId || cloudState.activeCarId,
       journal: current.journal,
     };
   }
@@ -321,6 +331,11 @@ function App() {
       ...current,
       cars: [nextCar, ...current.cars],
       activeCarId: carId,
+      vehicle: {
+        ...current.vehicle,
+        brand: brand.brand,
+        model: brand.models[0],
+      },
     }));
     setSyncStatus('Добавлена новая машина для журнала.');
   }
@@ -624,13 +639,13 @@ function App() {
       cars: current.cars.map((car) => car.id === current.activeCarId ? {
         ...car,
         brand,
-        model: option?.models[0] ?? current.vehicle.model,
-        name: `Моя ${brand} ${option?.models[0] ?? current.vehicle.model}`,
+        model: option?.models[0] ?? '',
+        name: brand ? `Моя ${brand} ${option?.models[0] ?? ''}`.trim() : 'Новая машина',
       } : car),
       vehicle: {
         ...current.vehicle,
         brand,
-        model: option?.models[0] ?? current.vehicle.model,
+        model: option?.models[0] ?? '',
       },
     }));
   }
@@ -832,7 +847,7 @@ function App() {
       workStatus: employeeDraft.role === 'mechanic' ? 'off_shift' : 'on_shift',
     };
     setState((current) => ({ ...current, staff: [next, ...current.staff] }));
-    setEmployeeDraft({ name: '', role: 'mechanic', specialization: '', shift: '09:00 - 18:00', workplace: 'Москва, ул. Шипиловская, 12', salaryRub: '90000' });
+    setEmployeeDraft({ name: '', role: 'mechanic', specialization: '', shift: '', workplace: '', salaryRub: '' });
   }
 
   function applyQuickCommand() {
@@ -876,11 +891,9 @@ function App() {
     try {
       setIsSavingProfile(true);
       if (state.role === 'owner') {
-        const nextVin = state.vehicle.vin && state.vehicle.vin !== demoState.vehicle.vin
-          ? state.vehicle.vin
-          : generateStableVin(session.user.id);
+        const nextVin = state.vehicle.vin.trim() || generateStableVin(session.user.id);
         await saveOwnerProfile({
-          profileName,
+          profileName: profileName.trim(),
           brand: state.vehicle.brand,
           model: state.vehicle.model,
           year: state.vehicle.year,
@@ -893,21 +906,21 @@ function App() {
         });
         setState((current) => ({
           ...current,
-          ownerName: profileName,
+          ownerName: profileName.trim(),
           cars: current.cars.map((car) => car.id === current.activeCarId ? {
             ...car,
             brand: current.vehicle.brand,
             model: current.vehicle.model,
-            name: `${current.ownerName || profileName}: ${current.vehicle.brand} ${current.vehicle.model}`,
+            name: `${current.vehicle.brand} ${current.vehicle.model}`.trim(),
           } : car),
           vehicle: { ...current.vehicle, vin: nextVin },
         }));
       } else if (state.role === 'mechanic') {
         await bootstrapDemoGarage(profileName.trim(), 'mechanic');
-        setState((current) => ({ ...current, mechanicName: profileName, approvalStatus: 'pending' }));
+        setState((current) => ({ ...current, mechanicName: profileName.trim(), approvalStatus: 'pending' }));
       } else {
         await saveStaffProfile({
-          profileName,
+          profileName: profileName.trim(),
           role: state.role,
           serviceCenterName,
           serviceCenterCity,
@@ -917,8 +930,8 @@ function App() {
           ...current,
           serviceCenter: {
             ...current.serviceCenter,
-            name: serviceCenterName,
-            city: serviceCenterCity,
+            name: serviceCenterName.trim(),
+            city: serviceCenterCity.trim(),
             bays: Number.parseInt(serviceCenterBays, 10) || 1,
           },
         }));
@@ -944,6 +957,12 @@ function App() {
       setState(demoState);
       setSession(null);
       setHasCloudProfile(false);
+      setProfileName('');
+      setServiceCenterName('');
+      setServiceCenterCity('');
+      setServiceCenterBays('');
+      setOwnerPartDraft(emptyPartDraft());
+      setServicePartDraft(emptyPartDraft());
       setSyncStatus('Аккаунт очищен. Можно зарегистрироваться заново.');
     } catch (error) {
       presentCloudError(error, 'Не удалось удалить аккаунт.');
@@ -1051,7 +1070,7 @@ function App() {
   return (
     <div className="app-shell">
       <div className="topbar">
-        <div className="brand-lockup"><p className="eyebrow">CodexCar</p><strong>{roleLabel}</strong><span className="muted">{currentDisplayName}</span></div>
+        <div className="brand-lockup"><p className="eyebrow">CodexCar</p><strong>{topRoleLabel}</strong><span className="muted">{currentDisplayName}</span></div>
         <div className="auth-strip">
           <span className={`pill ${session ? 'approved' : 'pending'}`}>{session?.user?.email ?? 'Не вошли'}</span>
           {!session ? <button className="primary-button compact" onClick={signIn}><LogIn size={16} />Войти / регистрация</button> : null}
@@ -1060,9 +1079,9 @@ function App() {
         </div>
       </div>
 
-      {isSettingsOpen && <section className="settings-panel"><div className="panel-heading"><div><h2>Настройки</h2><p className="muted">Тема, цвет машины и управление аккаунтом.</p></div><Cog size={22} /></div><div className="settings-grid">{allowRoleSwitchInSettings ? <div><span className="settings-label">Режим</span><div className="segmented"><button className={state.role === 'owner' ? 'active' : ''} onClick={() => switchRole('owner')}>Владелец</button><button className={state.role === 'mechanic' ? 'active' : ''} onClick={() => switchRole('mechanic')}>Механик</button><button className={state.role === 'service_admin' ? 'active' : ''} onClick={() => switchRole('service_admin')}>Админ СТО</button><button className={state.role === 'company_admin' ? 'active' : ''} onClick={() => switchRole('company_admin')}>Модератор</button></div></div> : <div><span className="settings-label">Аккаунт</span><div className="owner-code-card"><strong>{roleLabel}</strong><p className="muted">{currentDisplayName}</p></div></div>}<div><span className="settings-label">Цвет машины</span><div className="color-picker">{availableCarColors.map((color) => <button key={color} className={state.vehicle.color === color ? 'color-swatch active' : 'color-swatch'} onClick={() => setState((current) => ({ ...current, vehicle: { ...current.vehicle, color } }))}>{color}</button>)}</div></div></div><div className="settings-footer">{session ? <button className="danger-button" onClick={logout}><LogIn size={16} />Выйти</button> : null}<button className="danger-button" onClick={deleteAccount}><Trash2 size={16} />Удалить аккаунт и данные</button></div></section>}
+      {isSettingsOpen && <section className="settings-panel"><div className="panel-heading"><div><h2>Настройки</h2><p className="muted">{session ? 'Тема, цвет машины и управление аккаунтом.' : 'Войдите через Google, чтобы открыть профиль и машину.'}</p></div><Cog size={22} /></div><div className="settings-grid">{session ? <div><span className="settings-label">Аккаунт</span><div className="owner-code-card"><strong>{roleLabel}</strong><p className="muted">{currentDisplayName}</p></div></div> : <div><span className="settings-label">Доступ</span><div className="owner-code-card"><strong>Пока только вход</strong><p className="muted">После авторизации откроются лента, автомобиль, детали, ТО и ИИ.</p></div></div>}<div><span className="settings-label">Цвет машины</span><div className="color-picker">{availableCarColors.map((color) => <button key={color} className={state.vehicle.color === color ? 'color-swatch active' : 'color-swatch'} onClick={() => setState((current) => ({ ...current, vehicle: { ...current.vehicle, color } }))}>{color}</button>)}</div></div></div><div className="settings-footer">{session ? <button className="danger-button" onClick={logout}><LogIn size={16} />Выйти</button> : null}{session ? <button className="danger-button" onClick={deleteAccount}><Trash2 size={16} />Удалить аккаунт и данные</button> : null}</div></section>}
 
-      {showOnboarding ? (
+      {!session ? null : showOnboarding ? (
         <section className="onboarding-screen">
           <section className="settings-panel onboarding-panel">
             <div className="panel-heading">
@@ -1082,11 +1101,11 @@ function App() {
                   <button className={state.role === 'company_admin' ? 'active' : ''} onClick={() => switchRole('company_admin')}>Модератор</button>
                 </div>
               </div>
-              <div className="assistant-input"><input value={profileName} onChange={(event) => setProfileName(event.target.value)} placeholder={state.role === 'mechanic' ? 'Имя механика' : state.role === 'owner' ? 'Имя владельца' : state.role === 'service_admin' ? 'Имя админа СТО' : 'Имя модератора'} /></div>
+              <div className="assistant-input"><input value={profileName} onChange={(event) => setProfileName(event.target.value)} placeholder="Ваше имя и фамилия" /></div>
               {state.role === 'owner' && (
                 <>
-                  <div className="assistant-input"><select value={state.vehicle.brand} onChange={(event) => updateVehicleBrand(event.target.value)}>{vehicleBrandOptions.map((option) => <option key={option.brand} value={option.brand}>{option.brand}</option>)}</select></div>
-                  <div className="assistant-input"><select value={state.vehicle.model} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, model: event.target.value } }))}>{selectedBrandOption.models.map((model) => <option key={model} value={model}>{model}</option>)}</select></div>
+                  <div className="assistant-input"><select value={state.vehicle.brand} onChange={(event) => updateVehicleBrand(event.target.value)}><option value="">Выберите марку</option>{vehicleBrandOptions.map((option) => <option key={option.brand} value={option.brand}>{option.brand}</option>)}</select></div>
+                  <div className="assistant-input"><select value={state.vehicle.model} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, model: event.target.value } }))} disabled={!state.vehicle.brand}><option value="">{state.vehicle.brand ? 'Выберите модель' : 'Сначала выберите марку'}</option>{selectedBrandOption.models.map((model) => <option key={model} value={model}>{model}</option>)}</select></div>
                   <div className="assistant-input"><input value={state.vehicle.plate} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, plate: event.target.value } }))} placeholder="Номер авто" /></div>
                   <div className="assistant-input"><input value={state.vehicle.vin} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, vin: event.target.value.toUpperCase() } }))} placeholder="VIN" /></div>
                 </>
@@ -1099,7 +1118,7 @@ function App() {
                 </>
               )}
               <div className="hero-actions">
-                <button className="primary-button" onClick={finishOnboarding} disabled={isSavingProfile}>{isSavingProfile ? 'Сохраняем...' : 'Сохранить профиль'}</button>
+                <button className="primary-button" onClick={finishOnboarding} disabled={isSavingProfile || !profileName.trim() || (state.role === 'owner' && (!state.vehicle.brand || !state.vehicle.model)) || ((state.role === 'service_admin' || state.role === 'company_admin') && !serviceCenterName.trim())}>{isSavingProfile ? 'Сохраняем...' : 'Сохранить профиль'}</button>
               </div>
             </div>
           </section>
@@ -1110,7 +1129,7 @@ function App() {
 
       {showHeroCard ? <header className="hero-card">
         <div className="hero-copy"><h1>{state.role === 'owner' ? 'Машина и обслуживание в одном месте' : state.role === 'mechanic' ? 'Работы и детали в одном кабинете' : 'Команда и сервис без лишнего шума'}</h1><p className="hero-text">{syncStatus}</p><div className="hero-actions"><button className="primary-button" onClick={() => assistantRef.current?.scrollIntoView({ behavior: 'smooth' })}><Sparkles size={18} />Открыть помощника</button><button className="ghost-button" onClick={refreshCloud} disabled={!session}>Обновить</button></div></div>
-        <div className="hero-panel">{state.role === 'owner' ? <div className="vehicle-card hero-passport"><button className="passport-toggle" onClick={() => setIsPassportExpanded((current) => !current)}><div className="passport-collapsed"><div className="passport-visual" style={{ backgroundColor: carVisual.accent }}><img src={carVisual.image} alt={`${state.vehicle.brand} showcase`} /></div><div><strong>{state.vehicle.brand} {state.vehicle.model}</strong><p>{state.vehicle.plate}</p></div></div>{isPassportExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}</button>{isPassportExpanded && <div className="passport-expanded"><div className="vehicle-grid passport-details"><div><span>ID владельца</span><strong>{state.vehicle.ownerCode}</strong></div><div><span>VIN</span><strong>{state.vehicle.vin}</strong></div><div><span>Пробег</span><strong>{state.vehicle.mileageKm.toLocaleString('ru-RU')} км</strong></div><div><span>Двигатель</span><strong>{state.vehicle.engine}</strong></div><div><span>Цвет</span><strong>{state.vehicle.color}</strong></div><div><span>Осмотр</span><strong>{state.vehicle.nextInspection}</strong></div></div><div className="passport-share"><div className="owner-code-card"><strong>{state.vehicle.ownerCode}</strong><p className="muted">Этот ID можно вводить вручную или считывать по QR.</p></div>{ownerQrCode ? <div className="qr-card"><img src={ownerQrCode} alt="QR владельца" /><p className="muted">QR с ID владельца</p></div> : null}</div><div className="panel-heading passport-edit-heading"><div><h2>Сведения об авто</h2><p className="muted">Редактирование собрано прямо внутри карточки автомобиля.</p></div><button className="ghost-button compact" onClick={() => setIsVehicleEditorOpen((current) => !current)}><Pencil size={14} />{isVehicleEditorOpen ? 'Свернуть' : 'Изменить'}</button></div>{isVehicleEditorOpen && <div className="cloud-card"><div className="assistant-input"><input value={profileName} onChange={(event) => setProfileName(event.target.value)} placeholder="Имя владельца" /></div><div className="assistant-input"><select value={state.vehicle.brand} onChange={(event) => updateVehicleBrand(event.target.value)}>{vehicleBrandOptions.map((option) => <option key={option.brand} value={option.brand}>{option.brand}</option>)}</select></div><div className="assistant-input"><select value={state.vehicle.model} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, model: event.target.value } }))}>{selectedBrandOption.models.map((model) => <option key={model} value={model}>{model}</option>)}</select></div><div className="assistant-input"><input value={state.vehicle.plate} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, plate: event.target.value } }))} placeholder="Номер" /></div><div className="assistant-input"><input value={state.vehicle.vin} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, vin: event.target.value.toUpperCase() } }))} placeholder="VIN" /></div><div className="assistant-input"><input value={String(state.vehicle.mileageKm)} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, mileageKm: Number.parseInt(event.target.value, 10) || 0 } }))} placeholder="Пробег" /></div><div className="assistant-input"><input value={state.vehicle.engine} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, engine: event.target.value } }))} placeholder="Двигатель" /></div><button className="primary-button" onClick={() => { setState((current) => ({ ...current, ownerName: profileName })); setSyncStatus('Изменения автомобиля сохранены локально.'); setIsVehicleEditorOpen(false); }}>Сохранить сведения</button></div>}</div>}</div> : <div className="vehicle-card"><div className="vehicle-title">{state.role === 'mechanic' ? <Wrench size={20} /> : <Users size={20} />}<strong>{state.serviceCenter.name}</strong></div><p>{state.serviceCenter.city}</p><div className="vehicle-grid"><div><span>Постов</span><strong>{state.serviceCenter.bays}</strong></div><div><span>Ожидают механика</span><strong>{state.staff.filter((item) => item.role === 'mechanic' && item.approvalStatus === 'pending').length}</strong></div></div></div>}</div>
+        <div className="hero-panel">{state.role === 'owner' ? <div className="vehicle-card hero-passport"><button className="passport-toggle" onClick={() => setIsPassportExpanded((current) => !current)}><div className="passport-collapsed"><div className="passport-visual" style={{ backgroundColor: carVisual.accent }}><img src={carVisual.image} alt={`${state.vehicle.brand || 'Авто'} showcase`} /></div><div><strong>{`${state.vehicle.brand} ${state.vehicle.model}`.trim() || 'Ваш автомобиль'}</strong><p>{state.vehicle.plate || 'Номер появится после заполнения профиля'}</p></div></div>{isPassportExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}</button>{isPassportExpanded && <div className="passport-expanded"><div className="vehicle-grid passport-details"><div><span>ID владельца</span><strong>{state.vehicle.ownerCode || 'Появится после регистрации'}</strong></div><div><span>VIN</span><strong>{state.vehicle.vin || 'Не указан'}</strong></div><div><span>Пробег</span><strong>{state.vehicle.mileageKm ? `${state.vehicle.mileageKm.toLocaleString('ru-RU')} км` : 'Не указан'}</strong></div><div><span>Двигатель</span><strong>{state.vehicle.engine || 'Не указан'}</strong></div><div><span>Цвет</span><strong>{state.vehicle.color}</strong></div><div><span>Осмотр</span><strong>{state.vehicle.nextInspection || 'Не указан'}</strong></div></div><div className="passport-share"><div className="owner-code-card"><strong>{state.vehicle.ownerCode || 'ID появится после регистрации'}</strong><p className="muted">Этот ID можно вводить вручную или считывать по QR.</p></div>{ownerQrCode ? <div className="qr-card"><img src={ownerQrCode} alt="QR владельца" /><p className="muted">QR с ID владельца</p></div> : null}</div><div className="panel-heading passport-edit-heading"><div><h2>Сведения об авто</h2><p className="muted">Редактирование собрано прямо внутри карточки автомобиля.</p></div><button className="ghost-button compact" onClick={() => setIsVehicleEditorOpen((current) => !current)}><Pencil size={14} />{isVehicleEditorOpen ? 'Свернуть' : 'Изменить'}</button></div>{isVehicleEditorOpen && <div className="cloud-card"><div className="assistant-input"><input value={profileName} onChange={(event) => setProfileName(event.target.value)} placeholder="Ваше имя и фамилия" /></div><div className="assistant-input"><select value={state.vehicle.brand} onChange={(event) => updateVehicleBrand(event.target.value)}><option value="">Выберите марку</option>{vehicleBrandOptions.map((option) => <option key={option.brand} value={option.brand}>{option.brand}</option>)}</select></div><div className="assistant-input"><select value={state.vehicle.model} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, model: event.target.value } }))} disabled={!state.vehicle.brand}><option value="">{state.vehicle.brand ? 'Выберите модель' : 'Сначала выберите марку'}</option>{selectedBrandOption.models.map((model) => <option key={model} value={model}>{model}</option>)}</select></div><div className="assistant-input"><input value={state.vehicle.plate} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, plate: event.target.value } }))} placeholder="Номер" /></div><div className="assistant-input"><input value={state.vehicle.vin} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, vin: event.target.value.toUpperCase() } }))} placeholder="VIN" /></div><div className="assistant-input"><input value={state.vehicle.mileageKm ? String(state.vehicle.mileageKm) : ''} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, mileageKm: Number.parseInt(event.target.value, 10) || 0 } }))} placeholder="Пробег" /></div><div className="assistant-input"><input value={state.vehicle.engine} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, engine: event.target.value } }))} placeholder="Двигатель" /></div><button className="primary-button" onClick={() => { setState((current) => ({ ...current, ownerName: profileName.trim() })); setSyncStatus('Изменения автомобиля сохранены локально.'); setIsVehicleEditorOpen(false); }}>Сохранить сведения</button></div>}</div>}</div> : <div className="vehicle-card"><div className="vehicle-title">{state.role === 'mechanic' ? <Wrench size={20} /> : <Users size={20} />}<strong>{state.serviceCenter.name || 'СТО появится после регистрации'}</strong></div><p>{state.serviceCenter.city || 'Сначала завершите профиль'}</p><div className="vehicle-grid"><div><span>Постов</span><strong>{state.serviceCenter.bays || '—'}</strong></div><div><span>Ожидают механика</span><strong>{state.staff.filter((item) => item.role === 'mechanic' && item.approvalStatus === 'pending').length}</strong></div></div></div>}</div>
       </header> : null}
 
       <nav className="tabs tabs-top">{tabs.map((tab) => <button key={tab} className={activeTab === tab ? 'active' : ''} onClick={() => setActiveTab(tab)}>{tabLabels[tab]}</button>)}</nav>

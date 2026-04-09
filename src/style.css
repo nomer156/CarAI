@@ -979,6 +979,21 @@ h2 {
   gap: 12px;
 }
 
+.pending-owner-plan {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, var(--secondary-soft), transparent), var(--panel-strong);
+}
+
+.pending-owner-summary {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .quick-entry-primary {
   align-items: stretch;
 }

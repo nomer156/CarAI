@@ -15,6 +15,7 @@ import {
 import { clearGarageState, loadGarageState, saveGarageState } from './lib/db';
 import { checkLocalAiHealth, normalizeOwnerCommand } from './lib/localAi';
 import { buildOwnerExecutionPlan, heuristicNormalizeOwnerCommand } from './lib/ownerCommandEngine';
+import type { OwnerExecutionPlan } from './lib/ownerCommandEngine';
 import type { Car, GarageState, JournalRecord, MaintenanceTask, Part, StaffMember, UserRole } from './types';
 
 type TabKey = 'overview' | 'parts' | 'maintenance' | 'history' | 'assistant';
@@ -114,6 +115,7 @@ function App() {
   const [quickEntryDraft, setQuickEntryDraft] = useState<QuickEntryDraft>(emptyQuickEntryDraft());
   const [isQuickEntryExpanded, setIsQuickEntryExpanded] = useState(false);
   const [isSavingQuickEntry, setIsSavingQuickEntry] = useState(false);
+  const [pendingOwnerPlan, setPendingOwnerPlan] = useState<OwnerExecutionPlan | null>(null);
   const [editingJournalId, setEditingJournalId] = useState<string | null>(null);
   const [swipedRecordId, setSwipedRecordId] = useState<string | null>(null);
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
@@ -420,47 +422,62 @@ function App() {
       category: plan.record.category ?? 'manual',
     };
 
-    setState((current) => {
-      const nextJournal = editingJournalId
-        ? current.journal.map((record) => (record.id === editingJournalId ? nextRecord : record))
-        : [nextRecord, ...current.journal];
+    const applyOwnerPlan = (targetPlan: OwnerExecutionPlan, targetRecord: JournalRecord) => {
+      setState((current) => {
+        const nextJournal = editingJournalId
+          ? current.journal.map((record) => (record.id === editingJournalId ? targetRecord : record))
+          : [targetRecord, ...current.journal];
 
-      const nextVehicleMileageKm = plan.updatedVehicleMileageKm && plan.updatedVehicleMileageKm > current.vehicle.mileageKm
-        ? plan.updatedVehicleMileageKm
-        : current.vehicle.mileageKm;
+        const nextVehicleMileageKm = targetPlan.updatedVehicleMileageKm && targetPlan.updatedVehicleMileageKm > current.vehicle.mileageKm
+          ? targetPlan.updatedVehicleMileageKm
+          : current.vehicle.mileageKm;
 
-      const nextMaintenance = plan.updateMaintenance
-        ? current.maintenance.map((task) => task.id === 'to-1'
-          ? {
-            ...task,
-            lastDoneKm: nextRecord.mileage ?? nextVehicleMileageKm,
-            dueAtKm: nextRecord.nextMileage ?? ((nextRecord.mileage ?? nextVehicleMileageKm) + task.intervalKm),
-            notes: `Последняя замена масла: ${new Date(nextRecord.createdAt).toLocaleDateString('ru-RU')} • ${nextRecord.partName ?? recommendedOil?.label ?? 'масло уточняется'}.`,
-            priority: 'low' as const,
-          }
-          : task)
-        : current.maintenance;
+        const nextMaintenance = targetPlan.updateMaintenance
+          ? current.maintenance.map((task) => task.id === 'to-1'
+            ? {
+              ...task,
+              lastDoneKm: targetRecord.mileage ?? nextVehicleMileageKm,
+              dueAtKm: targetRecord.nextMileage ?? ((targetRecord.mileage ?? nextVehicleMileageKm) + task.intervalKm),
+              notes: `Последняя замена масла: ${new Date(targetRecord.createdAt).toLocaleDateString('ru-RU')} • ${targetRecord.partName ?? recommendedOil?.label ?? 'масло уточняется'}.`,
+              priority: 'low' as const,
+            }
+            : task)
+          : current.maintenance;
 
-      const nextParts = plan.partsToAdd.length ? [...plan.partsToAdd, ...current.parts] : current.parts;
+        const nextParts = targetPlan.partsToAdd.length ? [...targetPlan.partsToAdd, ...current.parts] : current.parts;
 
-      return {
-        ...current,
-        journal: nextJournal,
-        parts: nextParts,
-        maintenance: nextMaintenance,
-        vehicle: {
-          ...current.vehicle,
-          mileageKm: nextVehicleMileageKm,
-        },
-      };
-    });
+        return {
+          ...current,
+          journal: nextJournal,
+          parts: nextParts,
+          maintenance: nextMaintenance,
+          vehicle: {
+            ...current.vehicle,
+            mileageKm: nextVehicleMileageKm,
+          },
+        };
+      });
 
-    setEditingJournalId(null);
-    setQuickEntryDraft(emptyQuickEntryDraft());
-    setIsQuickEntryExpanded(false);
-    setSwipedRecordId(null);
-    setIsSavingQuickEntry(false);
-    setSyncStatus(isLocalAiAvailable ? `${plan.feedback} Локальный ИИ помог нормализовать команду.` : `${plan.feedback} Сработал локальный разбор без ИИ.`);
+      setEditingJournalId(null);
+      setQuickEntryDraft(emptyQuickEntryDraft());
+      setIsQuickEntryExpanded(false);
+      setSwipedRecordId(null);
+      setPendingOwnerPlan(null);
+      setIsSavingQuickEntry(false);
+      setSyncStatus(isLocalAiAvailable ? `${targetPlan.feedback} Локальный ИИ помог нормализовать команду.` : `${targetPlan.feedback} Сработал локальный разбор без ИИ.`);
+    };
+
+    if (plan.requiresConfirmation) {
+      setPendingOwnerPlan({
+        ...plan,
+        record: nextRecord,
+      });
+      setIsSavingQuickEntry(false);
+      setSyncStatus(plan.confirmationReason ?? 'Нужно подтвердить действие.');
+      return;
+    }
+
+    applyOwnerPlan(plan, nextRecord);
   }
 
   function applyTemplateRecord(note: string) {
@@ -1118,6 +1135,70 @@ function App() {
                 </div>
               </div>
               <div className="quick-entry-shell">
+                {pendingOwnerPlan ? (
+                  <div className="pending-owner-plan">
+                    <div className="panel-heading">
+                      <div>
+                        <h2>Подтвердите действие</h2>
+                        <p className="muted">{pendingOwnerPlan.confirmationReason ?? 'Помощник подготовил действие и ждет подтверждения.'}</p>
+                      </div>
+                      <BadgeCheck size={20} />
+                    </div>
+                    <div className="pending-owner-summary">
+                      {pendingOwnerPlan.summary?.map((line) => <span key={line} className="source-badge neutral">{line}</span>)}
+                    </div>
+                    <div className="hero-actions">
+                      <button className="primary-button" onClick={() => {
+                        const targetRecord = pendingOwnerPlan.record;
+                        const targetPlan = pendingOwnerPlan;
+                        setState((current) => {
+                          const nextJournal = editingJournalId
+                            ? current.journal.map((record) => (record.id === editingJournalId ? targetRecord : record))
+                            : [targetRecord, ...current.journal];
+
+                          const nextVehicleMileageKm = targetPlan.updatedVehicleMileageKm && targetPlan.updatedVehicleMileageKm > current.vehicle.mileageKm
+                            ? targetPlan.updatedVehicleMileageKm
+                            : current.vehicle.mileageKm;
+
+                          const nextMaintenance = targetPlan.updateMaintenance
+                            ? current.maintenance.map((task) => task.id === 'to-1'
+                              ? {
+                                ...task,
+                                lastDoneKm: targetRecord.mileage ?? nextVehicleMileageKm,
+                                dueAtKm: targetRecord.nextMileage ?? ((targetRecord.mileage ?? nextVehicleMileageKm) + task.intervalKm),
+                                notes: `Последняя замена масла: ${new Date(targetRecord.createdAt).toLocaleDateString('ru-RU')} • ${targetRecord.partName ?? 'масло уточняется'}.`,
+                                priority: 'low' as const,
+                              }
+                              : task)
+                            : current.maintenance;
+
+                          const nextParts = targetPlan.partsToAdd.length ? [...targetPlan.partsToAdd, ...current.parts] : current.parts;
+
+                          return {
+                            ...current,
+                            journal: nextJournal,
+                            parts: nextParts,
+                            maintenance: nextMaintenance,
+                            vehicle: {
+                              ...current.vehicle,
+                              mileageKm: nextVehicleMileageKm,
+                            },
+                          };
+                        });
+                        setEditingJournalId(null);
+                        setQuickEntryDraft(emptyQuickEntryDraft());
+                        setIsQuickEntryExpanded(false);
+                        setSwipedRecordId(null);
+                        setPendingOwnerPlan(null);
+                        setSyncStatus(`${targetPlan.feedback} Действие подтверждено.`);
+                      }}>Подтвердить</button>
+                      <button className="ghost-button" onClick={() => {
+                        setPendingOwnerPlan(null);
+                        setSyncStatus('Действие отменено. Можно уточнить запись и попробовать снова.');
+                      }}>Отменить</button>
+                    </div>
+                  </div>
+                ) : null}
                 <div className="assistant-input quick-entry-primary">
                   <input
                     ref={quickEntryInputRef}

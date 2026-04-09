@@ -35,6 +35,9 @@ export type OwnerExecutionPlan = {
   updatedVehicleMileageKm?: number;
   updateMaintenance?: boolean;
   feedback: string;
+  requiresConfirmation?: boolean;
+  confirmationReason?: string;
+  summary?: string[];
 };
 
 const OIL_PATTERN = /\b(\d{1,2}w[- ]?\d{2})\b/i;
@@ -211,6 +214,7 @@ export function buildOwnerExecutionPlan({ command, state, activeCarId, editingJo
   const nextMileage = command.nextMileage ?? (command.intent === 'replace_oil' ? effectiveMileage + (primaryMaintenance?.intervalKm ?? 10000) : undefined);
 
   if (command.intent === 'replace_oil') {
+    const inferredOil = !command.oilViscosity;
     const effectiveOil =
       normalizeOilViscosity(command.oilViscosity) ??
       normalizeOilViscosity(previousOilRecord?.partName) ??
@@ -237,6 +241,15 @@ export function buildOwnerExecutionPlan({ command, state, activeCarId, editingJo
       updatedVehicleMileageKm: effectiveMileage > state.vehicle.mileageKm ? effectiveMileage : undefined,
       updateMaintenance: true,
       feedback: `Запись о замене масла сохранена. ${effectiveOil ? `Использовано: ${effectiveOil}.` : ''}${recommendedOil ? ` Рекомендация для ${state.vehicle.brand} ${state.vehicle.model}: ${recommendedOil.label}.` : ''}`.trim(),
+      requiresConfirmation: inferredOil,
+      confirmationReason: inferredOil ? 'Вязкость не указана явно в тексте. Помощник подставил рекомендованное или последнее использованное масло.' : undefined,
+      summary: [
+        'Действие: замена масла',
+        `Дата: ${new Date(occurredAt).toLocaleDateString('ru-RU')}`,
+        `Пробег: ${effectiveMileage.toLocaleString('ru-RU')} км`,
+        `Масло: ${oilDescriptor || recommendedOil?.label || 'уточняется'}`,
+        `Следующая замена: ${nextMileage?.toLocaleString('ru-RU') ?? 'не указана'} км`,
+      ],
     };
   }
 
@@ -267,6 +280,15 @@ export function buildOwnerExecutionPlan({ command, state, activeCarId, editingJo
       }] : [],
       updatedVehicleMileageKm: command.mileageKm && command.mileageKm > state.vehicle.mileageKm ? command.mileageKm : undefined,
       feedback: `Запись по детали сохранена${command.shouldCreatePart ? ' и добавлена в список деталей' : ''}.`,
+      requiresConfirmation: Boolean(command.shouldCreatePart),
+      confirmationReason: command.shouldCreatePart ? 'Помощник хочет не только сохранить запись, но и добавить новую деталь в каталог без OEM.' : undefined,
+      summary: [
+        'Действие: запись по детали',
+        `Дата: ${new Date(occurredAt).toLocaleDateString('ru-RU')}`,
+        `Деталь: ${command.partName}`,
+        `Производитель: ${command.manufacturer ?? 'не указан'}`,
+        `Пробег: ${(command.mileageKm ?? state.vehicle.mileageKm).toLocaleString('ru-RU')} км`,
+      ],
     };
   }
 
@@ -285,6 +307,11 @@ export function buildOwnerExecutionPlan({ command, state, activeCarId, editingJo
       partsToAdd: [],
       updatedVehicleMileageKm: command.mileageKm,
       feedback: 'Пробег обновлен и заметка сохранена.',
+      summary: [
+        'Действие: обновление пробега',
+        `Дата: ${new Date(occurredAt).toLocaleDateString('ru-RU')}`,
+        `Новый пробег: ${command.mileageKm.toLocaleString('ru-RU')} км`,
+      ],
     };
   }
 
@@ -305,5 +332,10 @@ export function buildOwnerExecutionPlan({ command, state, activeCarId, editingJo
     partsToAdd: [],
     updatedVehicleMileageKm: command.mileageKm && command.mileageKm > state.vehicle.mileageKm ? command.mileageKm : undefined,
     feedback: 'Заметка сохранена.',
+    summary: [
+      'Действие: сохранить заметку',
+      `Дата: ${new Date(occurredAt).toLocaleDateString('ru-RU')}`,
+      `Текст: ${command.normalizedText?.trim() || command.rawText}`,
+    ],
   };
 }

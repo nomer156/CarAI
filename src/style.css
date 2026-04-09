@@ -988,6 +988,19 @@ h2 {
   min-width: 220px;
 }
 
+.owner-entry-heading {
+  margin-bottom: 10px;
+}
+
+.owner-entry-actions {
+  margin-bottom: 18px;
+  justify-content: flex-start;
+}
+
+.owner-entry-actions > * {
+  flex: 1 1 220px;
+}
+
 .quick-entry-shell {
   display: grid;
   gap: 12px;
@@ -1169,9 +1182,13 @@ h2 {
   .assistant-input,
   .timeline-item,
   .role-switcher,
-  .quick-command-input {
-    grid-template-columns: 1fr;
+  .quick-command-input,
+  .panel-heading {
     flex-direction: column;
+  }
+
+  .panel-heading {
+    align-items: stretch;
   }
 
   .hero-actions .primary-button,
@@ -1251,17 +1268,9 @@ h2 {
   }
 
   .car-selector,
-  .inline-toggle {
+  .inline-toggle,
+  .owner-entry-actions > * {
     width: 100%;
-  }
-
-  .fab-add {
-    left: 16px;
-    right: 16px;
-    width: auto;
-    max-width: calc(100% - 32px);
-    bottom: calc(86px + env(safe-area-inset-bottom));
-    justify-content: center;
   }
 
   .part-card-actions,

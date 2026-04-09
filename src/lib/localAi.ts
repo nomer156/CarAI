@@ -27,7 +27,10 @@ export type NormalizedOwnerCommand = {
 };
 
 const DEFAULT_LOCAL_AI_URL = 'http://127.0.0.1:11535';
-const DEFAULT_PUBLIC_AI_URL = 'https://vpn-little-hosts-deal.trycloudflare.com';
+const DEFAULT_PUBLIC_AI_URL = 'https://collaborative-pmid-cargo-llp.trycloudflare.com';
+const LEGACY_PUBLIC_AI_URLS = [
+  'https://vpn-little-hosts-deal.trycloudflare.com',
+];
 
 function sanitizeUrl(value?: string | null) {
   const trimmed = value?.trim();
@@ -43,6 +46,18 @@ export function getConfiguredAiBackendUrl() {
   return runtimeOverride ?? envUrl ?? (isLocalHost ? DEFAULT_LOCAL_AI_URL : DEFAULT_PUBLIC_AI_URL);
 }
 
+function getAiBackendCandidates() {
+  const runtimeOverride = sanitizeUrl(window.localStorage.getItem('codexcar-ai-backend-url'));
+  const envUrl = sanitizeUrl(import.meta.env.VITE_AI_BACKEND_URL);
+  const host = window.location.hostname;
+  const isLocalHost = host === 'localhost' || host === '127.0.0.1';
+  const candidates = isLocalHost
+    ? [runtimeOverride, envUrl, DEFAULT_LOCAL_AI_URL]
+    : [runtimeOverride, envUrl, DEFAULT_PUBLIC_AI_URL, ...LEGACY_PUBLIC_AI_URLS];
+
+  return [...new Set(candidates.filter((value): value is string => Boolean(value)))];
+}
+
 export function setConfiguredAiBackendUrl(url: string) {
   const normalized = sanitizeUrl(url);
   if (!normalized) {
@@ -52,30 +67,43 @@ export function setConfiguredAiBackendUrl(url: string) {
   window.localStorage.setItem('codexcar-ai-backend-url', normalized);
 }
 
-async function request<T>(path: string, init?: RequestInit, timeoutMs = 12000): Promise<T> {
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
-  const aiBaseUrl = getConfiguredAiBackendUrl();
+async function request<T>(path: string, init?: RequestInit, timeoutMs = 12000): Promise<{ data: T; url: string }> {
+  const candidates = getAiBackendCandidates();
+  let lastError: Error | null = null;
 
-  try {
-    const response = await fetch(`${aiBaseUrl}${path}`, {
-      ...init,
-      signal: controller.signal,
-    });
+  for (const aiBaseUrl of candidates) {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
 
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(text || `Local AI error: ${response.status}`);
+    try {
+      const response = await fetch(`${aiBaseUrl}${path}`, {
+        ...init,
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `Local AI error: ${response.status}`);
+      }
+
+      const data = await response.json() as T;
+      if (aiBaseUrl !== getConfiguredAiBackendUrl()) {
+        setConfiguredAiBackendUrl(aiBaseUrl);
+      }
+      return { data, url: aiBaseUrl };
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error('Local AI request failed');
+    } finally {
+      window.clearTimeout(timeout);
     }
-
-    return response.json() as Promise<T>;
-  } finally {
-    window.clearTimeout(timeout);
   }
+
+  throw lastError ?? new Error('Local AI request failed');
 }
 
 export async function checkLocalAiHealth() {
-  return request<{ ok: boolean; model: string }>('/health', undefined, 3000);
+  const result = await request<{ ok: boolean; model: string }>('/health', undefined, 3000);
+  return { ...result.data, url: result.url };
 }
 
 export async function parseMaintenanceNote(input: {
@@ -83,13 +111,14 @@ export async function parseMaintenanceNote(input: {
   mileage?: number;
   carName?: string;
 }) {
-  return request<ParsedMaintenanceNote>('/parse-record', {
+  const result = await request<ParsedMaintenanceNote>('/parse-record', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(input),
   });
+  return result.data;
 }
 
 export async function normalizeOwnerCommand(input: {
@@ -100,11 +129,12 @@ export async function normalizeOwnerCommand(input: {
   lastOil?: string;
   recommendedOil?: string;
 }) {
-  return request<NormalizedOwnerCommand>('/normalize-command', {
+  const result = await request<NormalizedOwnerCommand>('/normalize-command', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(input),
   });
+  return result.data;
 }

@@ -170,11 +170,12 @@ function App() {
     try {
       const result = await checkLocalAiHealth();
       if (!result.ok) throw new Error('Local AI unavailable');
+      setAiBackendUrl(result.url);
       setIsLocalAiAvailable(true);
-      setLocalAiStatus(`AI backend подключен: ${result.model}. URL: ${getConfiguredAiBackendUrl()}`);
+      setLocalAiStatus(`AI backend подключен: ${result.model}. URL: ${result.url}`);
     } catch {
       setIsLocalAiAvailable(false);
-      setLocalAiStatus(`AI backend недоступен по адресу ${getConfiguredAiBackendUrl()}. Запустите локальный сервер или укажите публичный tunnel URL.`);
+      setLocalAiStatus(`AI backend недоступен. После перезапуска tunnel URL может измениться, поэтому проверьте адрес в разделе "Локальный ИИ".`);
     }
   }
 
@@ -1147,22 +1148,22 @@ function App() {
         {state.role === 'owner' && activeTab === 'overview' && (
           <section className="grid">
             <article className="panel panel-wide">
-              <div className="panel-heading">
+              <div className="panel-heading owner-entry-heading">
                 <div>
                   <h2>Быстрая запись</h2>
                   <p className="muted">Одна строка, минимум тапов. ИИ может помочь позже, но запись уже сейчас полностью работает сама по себе.</p>
                 </div>
-                <div className="owner-overview-actions">
-                  <div className="assistant-input car-selector">
-                    <select value={activeCar?.id} onChange={(event) => {
-                      const nextCar = state.cars.find((car) => car.id === event.target.value);
-                      if (nextCar) updateActiveCar(nextCar);
-                    }}>
-                      {state.cars.map((car) => <option key={car.id} value={car.id}>{car.name}</option>)}
-                    </select>
-                  </div>
-                  <button className="ghost-button compact" onClick={addCarTemplate}><CarFront size={14} />Новая машина</button>
+              </div>
+              <div className="owner-overview-actions owner-entry-actions">
+                <div className="assistant-input car-selector">
+                  <select value={activeCar?.id} onChange={(event) => {
+                    const nextCar = state.cars.find((car) => car.id === event.target.value);
+                    if (nextCar) updateActiveCar(nextCar);
+                  }}>
+                    {state.cars.map((car) => <option key={car.id} value={car.id}>{car.name}</option>)}
+                  </select>
                 </div>
+                <button className="ghost-button compact" onClick={addCarTemplate}><CarFront size={14} />Новая машина</button>
               </div>
               <div className="quick-entry-shell">
                 {pendingOwnerPlan ? (
@@ -1280,6 +1281,7 @@ function App() {
         )}
         {state.role === 'owner' && activeTab === 'parts' && <section className="grid"><article className="panel panel-wide"><div className="panel-heading"><div><h2>Добавить деталь</h2><p className="muted">Получит желтую галочку: менял сам.</p></div><Plus size={20} /></div><div className="cloud-card"><div className="assistant-input"><input value={ownerPartDraft.name} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Название" /></div><div className="assistant-input"><input value={ownerPartDraft.oem} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, oem: event.target.value }))} placeholder="OEM" /></div><div className="assistant-input"><input value={ownerPartDraft.manufacturer} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, manufacturer: event.target.value }))} placeholder="Производитель" /></div><div className="assistant-input"><input value={ownerPartDraft.price} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, price: event.target.value }))} placeholder="Цена" /></div><div className="assistant-input"><input value={ownerPartDraft.note} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, note: event.target.value }))} placeholder="Заметка" /></div><button className="primary-button" onClick={() => addPart('self')}>Добавить</button></div></article><article className="panel panel-wide"><div className="parts-grid">{state.parts.length ? state.parts.map(renderPartCard) : <EmptyState title="Деталей пока нет" text="Добавьте первую деталь выше, чтобы сохранить OEM, производителя и заметку по замене." />}</div></article></section>}
         {state.role === 'owner' && activeTab === 'maintenance' && <section className="grid"><article className="panel"><div className="panel-heading"><div><h2>Что ближайшее</h2><p className="muted">Раздел только для просмотра: здесь собран понятный регламент без ручного добавления ТО.</p></div><BadgeCheck size={22} /></div><div className="maintenance-summary-grid"><div className="feature"><div><strong>{nearestMaintenance?.title ?? 'ТО не найдено'}</strong><p className="muted">Следующий обязательный визит</p></div><strong>{nearestMaintenance ? `${remainingMileage(nearestMaintenance, state.vehicle.mileageKm).toLocaleString('ru-RU')} км` : '—'}</strong></div><div className="feature"><div><strong>{state.vehicle.mileageKm.toLocaleString('ru-RU')} км</strong><p className="muted">Текущий пробег автомобиля</p></div><strong>{state.vehicle.nextInspection}</strong></div><div className="feature"><div><strong>{state.maintenance.length}</strong><p className="muted">Регламентных этапов уже подготовлено</p></div><strong>{verifiedRecords} записи СТО</strong></div></div></article><article className="panel panel-wide maintenance-stack">{state.maintenance.length ? [...state.maintenance].sort((left, right) => left.dueAtKm - right.dueAtKm).map((task) => <article className="maintenance-card" key={task.id}><button className="maintenance-toggle" onClick={() => setExpandedMaintenanceId((current) => current === task.id ? null : task.id)}><div><span className="maintenance-kicker">{task.title}</span><strong>{task.title} · {task.intervalKm.toLocaleString('ru-RU')} км</strong><p className="muted">Следующее выполнение до {task.dueAtKm.toLocaleString('ru-RU')} км</p></div>{expandedMaintenanceId === task.id ? <ChevronUp size={18} /> : <ChevronDown size={18} />}</button><div className="maintenance-meta-grid"><div><span>Осталось</span><strong>{remainingMileage(task, state.vehicle.mileageKm).toLocaleString('ru-RU')} км</strong></div><div><span>Последний раз</span><strong>{task.lastDoneKm.toLocaleString('ru-RU')} км</strong></div><div><span>Приоритет</span><strong>{task.priority === 'high' ? 'Высокий' : task.priority === 'medium' ? 'Средний' : 'Плановый'}</strong></div></div><div className="progress-track"><div className="progress-bar" style={{ width: `${maintenanceProgress(task, state.vehicle.mileageKm)}%` }} /></div>{expandedMaintenanceId === task.id && <div className="maintenance-details"><ul className="stack-list">{task.items.map((item) => <li key={item}>{item}</li>)}</ul><p className="muted">{task.notes}</p></div>}</article>) : <EmptyState title="ТО пока не заполнено" text="После первой записи обслуживания здесь появятся регламентные работы и интервалы пробега." />}</article></section>}
+        {state.role === 'owner' && activeTab === 'maintenance' && <section className="grid"><article className="panel"><div className="panel-heading"><div><h2>Что ближайшее</h2><p className="muted">Раздел только для просмотра: регламент уже встроен, вручную добавлять ТО не нужно.</p></div><BadgeCheck size={22} /></div><div className="maintenance-summary-grid"><div className="feature"><div><strong>{nearestMaintenance?.title ?? 'ТО не найдено'}</strong><p className="muted">Следующий обязательный визит</p></div><strong>{nearestMaintenance ? `${remainingMileage(nearestMaintenance, state.vehicle.mileageKm).toLocaleString('ru-RU')} км` : '—'}</strong></div><div className="feature"><div><strong>{state.vehicle.mileageKm.toLocaleString('ru-RU')} км</strong><p className="muted">Текущий пробег автомобиля</p></div><strong>{state.vehicle.nextInspection}</strong></div><div className="feature"><div><strong>{state.maintenance.length}</strong><p className="muted">Этапов регламента уже подготовлено</p></div><strong>{verifiedRecords} записи СТО</strong></div></div><div className="owner-code-card maintenance-helper"><strong>Откуда берется ТО</strong><p className="muted">Этапы ТО уже зашиты в приложение по регламенту. Лента, детали и записи сервиса только обновляют даты и пробег последнего выполненного обслуживания.</p></div></article><article className="panel panel-wide maintenance-stack">{state.maintenance.length ? [...state.maintenance].sort((left, right) => left.dueAtKm - right.dueAtKm).map((task) => <article className="maintenance-card" key={task.id}><button className="maintenance-toggle" onClick={() => setExpandedMaintenanceId((current) => current === task.id ? null : task.id)}><div><span className="maintenance-kicker">{task.title}</span><strong>{task.title} · {task.intervalKm.toLocaleString('ru-RU')} км</strong><p className="muted">Следующее выполнение до {task.dueAtKm.toLocaleString('ru-RU')} км</p></div>{expandedMaintenanceId === task.id ? <ChevronUp size={18} /> : <ChevronDown size={18} />}</button><div className="maintenance-meta-grid"><div><span>Осталось</span><strong>{remainingMileage(task, state.vehicle.mileageKm).toLocaleString('ru-RU')} км</strong></div><div><span>Последний раз</span><strong>{task.lastDoneKm.toLocaleString('ru-RU')} км</strong></div><div><span>Приоритет</span><strong>{task.priority === 'high' ? 'Высокий' : task.priority === 'medium' ? 'Средний' : 'Плановый'}</strong></div></div><div className="progress-track"><div className="progress-bar" style={{ width: `${maintenanceProgress(task, state.vehicle.mileageKm)}%` }} /></div>{expandedMaintenanceId === task.id && <div className="maintenance-details"><ul className="stack-list">{task.items.map((item) => <li key={item}>{item}</li>)}</ul><p className="muted">{task.notes}</p></div>}</article>) : <EmptyState title="ТО пока не заполнено" text="Регламент появится автоматически, как только для автомобиля появятся базовые данные и первая запись обслуживания." />}</article></section>}
         {state.role === 'owner' && activeTab === 'history' && <section className="grid"><article className="panel"><div className="panel-heading"><div><h2>Сервисная сводка</h2><p className="muted">Только фактические визиты и подтвержденные работы без лишних кнопок.</p></div><Wrench size={22} /></div><div className="service-summary-grid"><div className="feature"><div><strong>{verifiedRecords}</strong><p className="muted">Подтвержденных работ</p></div></div><div className="feature"><div><strong>{latestRecord?.date ?? '—'}</strong><p className="muted">Последний визит в сервис</p></div></div><div className="feature"><div><strong>{latestRecord?.location ?? 'СТО не указано'}</strong><p className="muted">Последнее место обслуживания</p></div></div></div></article><article className="panel panel-wide"><div className="panel-heading"><div><h2>История обслуживания</h2><p className="muted">Каждая запись показывает дату, сервис, исполнителя и краткий итог работ.</p></div><BadgeCheck size={22} /></div><div className="service-history-stack">{state.records.length ? state.records.map((record) => <article className="service-history-card" key={record.id}><div className="service-history-head"><div><strong>{record.title}</strong><p>{record.date} • {record.location}</p></div><span className={`source-badge ${record.verified ? 'service' : 'neutral'}`}>{record.verified ? 'Подтверждено' : 'Черновик'}</span></div><div className="service-history-meta"><span>Мастер: {record.mechanic}</span><span>Авто: {state.vehicle.brand} {state.vehicle.model}</span></div><p className="muted">{record.details}</p></article>) : <EmptyState title="История обслуживания пуста" text="Когда вы или сервис добавите первую работу, она появится в этом разделе." />}</div></article></section>}
         {state.role === 'owner' && activeTab === 'assistant' && (
           <section className="grid" ref={assistantRef}>
@@ -1334,21 +1336,6 @@ function App() {
         {state.role === 'company_admin' && activeTab === 'history' && <section className="grid"><article className="panel panel-wide"><div className="panel-heading"><div><h2>Логи платформы</h2><p className="muted">Действия компаний, сотрудников и модерации.</p></div><Cog size={22} /></div><div className="timeline">{state.activityLogs.map((log) => <div className="timeline-item" key={log.id}><div><strong>{log.actor}</strong><p>{log.action}</p><p className="muted">{log.target} • {log.timestamp} • {log.scope}</p></div></div>)}</div></article></section>}
         {state.role === 'company_admin' && activeTab === 'assistant' && <section className="grid" ref={assistantRef}><article className="panel panel-wide assistant-panel"><div className="assistant-log">{assistantLog.map((message, index) => <p key={`${message}-${index}`}>{message}</p>)}</div><div className="assistant-input"><input value={assistantInput} onChange={(event) => setAssistantInput(event.target.value)} placeholder="Заметка модератора" /><button className="primary-button" onClick={() => { if (!assistantInput.trim()) return; setAssistantLog((current) => [...current, `Вы: ${assistantInput}`, `AI: ${assistantReply(assistantInput, state)}`]); setAssistantInput(''); }}>Сохранить</button></div></article></section>}
       </main>
-
-      {state.role === 'owner' && !showOnboarding && activeTab === 'overview' ? (
-        <button
-          className="fab-add"
-          onClick={() => {
-            setActiveTab('overview');
-            setIsQuickEntryExpanded(false);
-            quickEntryInputRef.current?.focus();
-          }}
-        >
-          <Plus size={22} />
-          Добавить
-        </button>
-      ) : null}
-
       <nav className="tabs tabs-bottom">{tabs.map((tab) => <button key={tab} className={activeTab === tab ? 'active' : ''} onClick={() => setActiveTab(tab)}>{tabLabels[tab]}</button>)}</nav>
         </>
       )}

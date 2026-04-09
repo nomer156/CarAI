@@ -1054,7 +1054,7 @@ function App() {
 
       <nav className="tabs tabs-top">{tabs.map((tab) => <button key={tab} className={activeTab === tab ? 'active' : ''} onClick={() => setActiveTab(tab)}>{tabLabels[tab]}</button>)}</nav>
 
-      <main className="dashboard">
+      <main className={state.role === 'owner' && activeTab === 'overview' ? 'dashboard dashboard-with-fab' : 'dashboard'}>
         {state.role === 'owner' && activeTab !== 'overview' && ownerSectionMeta[activeTab] ? (
           <section className="owner-context-card">
             <p className="eyebrow">CodexCar</p>

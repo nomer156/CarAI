@@ -591,6 +591,10 @@ h2 {
   margin-top: 16px;
 }
 
+.dashboard-with-fab {
+  padding-bottom: 128px;
+}
+
 .tabs {
   position: sticky;
   z-index: 20;
@@ -1218,14 +1222,15 @@ h2 {
   }
 
   .car-selector,
-  .inline-toggle,
-  .fab-add {
+  .inline-toggle {
     width: 100%;
   }
 
   .fab-add {
     left: 16px;
     right: 16px;
+    width: auto;
+    max-width: calc(100% - 32px);
     bottom: calc(86px + env(safe-area-inset-bottom));
     justify-content: center;
   }

@@ -8,6 +8,24 @@ export type ParsedMaintenanceNote = {
   source?: 'manual' | 'ai';
 };
 
+export type NormalizedOwnerCommand = {
+  intent: 'replace_oil' | 'add_part' | 'update_mileage' | 'note_only';
+  rawText: string;
+  normalizedText?: string;
+  confidence: number;
+  dateMode: 'today' | 'yesterday' | 'specific' | 'unknown';
+  specificDate?: string;
+  mileageKm?: number;
+  oilViscosity?: string;
+  oilBrand?: string;
+  partName?: string;
+  manufacturer?: string;
+  category?: string;
+  cost?: number;
+  nextMileage?: number;
+  shouldCreatePart?: boolean;
+};
+
 const LOCAL_AI_URL = 'http://127.0.0.1:11535';
 
 async function request<T>(path: string, init?: RequestInit, timeoutMs = 12000): Promise<T> {
@@ -41,6 +59,23 @@ export async function parseMaintenanceNote(input: {
   carName?: string;
 }) {
   return request<ParsedMaintenanceNote>('/parse-record', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function normalizeOwnerCommand(input: {
+  text: string;
+  mileage?: number;
+  brand?: string;
+  model?: string;
+  lastOil?: string;
+  recommendedOil?: string;
+}) {
+  return request<NormalizedOwnerCommand>('/normalize-command', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

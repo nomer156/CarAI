@@ -5,7 +5,7 @@ import {
   BadgeCheck, Bot, CarFront, Check, ChevronDown, ChevronUp, Cog, Download, LogIn, Moon, Pencil, Plus,
   Save, Sparkles, SunMedium, Trash2, Users, Wrench, X,
 } from 'lucide-react';
-import { availableCarColors, resolveCarVisual, vehicleBrandOptions } from './data/carCatalog';
+import { availableCarColors, resolveCarVisual, resolveRecommendedOil, vehicleBrandOptions } from './data/carCatalog';
 import { demoState } from './data/demoData';
 import {
   addServiceRecordByOwnerCode, addVehicleToServiceIntake, bootstrapDemoGarage, deleteCloudAccountData, getCurrentSession,
@@ -13,7 +13,8 @@ import {
   signInWithGoogle, signOutCloud, subscribeToAuthChanges, updateServiceQueueStatus, upsertVehiclePart,
 } from './lib/cloud';
 import { clearGarageState, loadGarageState, saveGarageState } from './lib/db';
-import { checkLocalAiHealth, parseMaintenanceNote } from './lib/localAi';
+import { checkLocalAiHealth, normalizeOwnerCommand } from './lib/localAi';
+import { buildOwnerExecutionPlan, heuristicNormalizeOwnerCommand } from './lib/ownerCommandEngine';
 import type { Car, GarageState, JournalRecord, MaintenanceTask, Part, StaffMember, UserRole } from './types';
 
 type TabKey = 'overview' | 'parts' | 'maintenance' | 'history' | 'assistant';
@@ -358,74 +359,108 @@ function App() {
     if (!rawNote || !activeCar) return;
 
     setIsSavingQuickEntry(true);
+    const draftMileage = quickEntryDraft.mileage ? Number.parseInt(quickEntryDraft.mileage, 10) || undefined : undefined;
+    const draftCost = quickEntryDraft.cost ? Number.parseInt(quickEntryDraft.cost, 10) || undefined : undefined;
+    const draftNextMileage = quickEntryDraft.nextMileage ? Number.parseInt(quickEntryDraft.nextMileage, 10) || undefined : undefined;
+    const previousOilRecord = [...state.journal]
+      .filter((record) => record.carId === activeCar.id && /масл/i.test(record.note))
+      .sort((left, right) => right.createdAt - left.createdAt)[0];
+    const recommendedOil = resolveRecommendedOil(state.vehicle.brand, state.vehicle.model);
 
-    const fallbackRecord: JournalRecord = {
-      id: editingJournalId ?? `record-${Date.now()}`,
-      carId: activeCar.id,
-      createdAt: editingJournalId
-        ? state.journal.find((record) => record.id === editingJournalId)?.createdAt ?? Date.now()
-        : Date.now(),
-      mileage: quickEntryDraft.mileage ? Number.parseInt(quickEntryDraft.mileage, 10) || undefined : undefined,
-      note: rawNote,
-      rawNote,
-      category: 'manual',
-      partName: quickEntryDraft.partName || undefined,
-      rating: quickEntryDraft.rating,
-      cost: quickEntryDraft.cost ? Number.parseInt(quickEntryDraft.cost, 10) || undefined : undefined,
-      nextMileage: quickEntryDraft.nextMileage ? Number.parseInt(quickEntryDraft.nextMileage, 10) || undefined : undefined,
-      source: 'manual',
+    let command = heuristicNormalizeOwnerCommand({
+      text: rawNote,
+      brand: state.vehicle.brand,
+      model: state.vehicle.model,
+      currentMileageKm: state.vehicle.mileageKm,
+    });
+
+    command = {
+      ...command,
+      rawText: rawNote,
+      mileageKm: draftMileage ?? command.mileageKm,
+      partName: quickEntryDraft.partName || command.partName,
+      cost: draftCost ?? command.cost,
+      nextMileage: draftNextMileage ?? command.nextMileage,
+      category: command.category ?? 'manual',
     };
 
-    let parsed = fallbackRecord;
     if (isLocalAiAvailable) {
       try {
-        const result = await parseMaintenanceNote({
-          note: rawNote,
-          mileage: fallbackRecord.mileage,
-          carName: activeCar.name,
+        const result = await normalizeOwnerCommand({
+          text: rawNote,
+          mileage: draftMileage ?? state.vehicle.mileageKm,
+          brand: state.vehicle.brand,
+          model: state.vehicle.model,
+          lastOil: previousOilRecord?.partName,
+          recommendedOil: recommendedOil?.label,
         });
-        parsed = {
-          ...fallbackRecord,
-          note: result.note || fallbackRecord.note,
-          category: result.category || fallbackRecord.category,
-          partName: result.partName || fallbackRecord.partName,
-          rating: result.rating ?? fallbackRecord.rating,
-          cost: result.cost ?? fallbackRecord.cost,
-          nextMileage: result.nextMileage ?? fallbackRecord.nextMileage,
-          source: result.source ?? 'ai',
+        command = {
+          ...result,
+          rawText: rawNote,
+          mileageKm: draftMileage ?? result.mileageKm,
+          partName: quickEntryDraft.partName || result.partName,
+          cost: draftCost ?? result.cost,
+          nextMileage: draftNextMileage ?? result.nextMileage,
         };
       } catch {
-        setLocalAiStatus('Локальный ИИ не ответил, запись сохранена как обычная заметка.');
+        setLocalAiStatus('Локальный ИИ не ответил. Включен локальный разбор по правилам.');
       }
     }
 
-    setState((current) => ({
-      ...current,
-      journal: editingJournalId
-        ? current.journal.map((record) => (record.id === editingJournalId ? parsed : record))
-        : [parsed, ...current.journal],
-    }));
+    const plan = buildOwnerExecutionPlan({
+      command,
+      state,
+      activeCarId: activeCar.id,
+      editingJournalId,
+    });
 
-    if (!editingJournalId && parsed.note.toLowerCase().includes('масло')) {
-      setState((current) => ({
-        ...current,
-        maintenance: current.maintenance.map((task) => task.id === 'to-1'
+    const nextRecord: JournalRecord = {
+      ...plan.record,
+      rating: quickEntryDraft.rating ?? plan.record.rating,
+      category: plan.record.category ?? 'manual',
+    };
+
+    setState((current) => {
+      const nextJournal = editingJournalId
+        ? current.journal.map((record) => (record.id === editingJournalId ? nextRecord : record))
+        : [nextRecord, ...current.journal];
+
+      const nextVehicleMileageKm = plan.updatedVehicleMileageKm && plan.updatedVehicleMileageKm > current.vehicle.mileageKm
+        ? plan.updatedVehicleMileageKm
+        : current.vehicle.mileageKm;
+
+      const nextMaintenance = plan.updateMaintenance
+        ? current.maintenance.map((task) => task.id === 'to-1'
           ? {
             ...task,
-            lastDoneKm: parsed.mileage ?? current.vehicle.mileageKm,
-            dueAtKm: parsed.nextMileage ?? ((parsed.mileage ?? current.vehicle.mileageKm) + task.intervalKm),
-            notes: `Последняя быстрая запись: ${new Date(parsed.createdAt).toLocaleDateString('ru-RU')}.`,
+            lastDoneKm: nextRecord.mileage ?? nextVehicleMileageKm,
+            dueAtKm: nextRecord.nextMileage ?? ((nextRecord.mileage ?? nextVehicleMileageKm) + task.intervalKm),
+            notes: `Последняя замена масла: ${new Date(nextRecord.createdAt).toLocaleDateString('ru-RU')} • ${nextRecord.partName ?? recommendedOil?.label ?? 'масло уточняется'}.`,
+            priority: 'low' as const,
           }
-          : task),
-      }));
-    }
+          : task)
+        : current.maintenance;
+
+      const nextParts = plan.partsToAdd.length ? [...plan.partsToAdd, ...current.parts] : current.parts;
+
+      return {
+        ...current,
+        journal: nextJournal,
+        parts: nextParts,
+        maintenance: nextMaintenance,
+        vehicle: {
+          ...current.vehicle,
+          mileageKm: nextVehicleMileageKm,
+        },
+      };
+    });
 
     setEditingJournalId(null);
     setQuickEntryDraft(emptyQuickEntryDraft());
     setIsQuickEntryExpanded(false);
     setSwipedRecordId(null);
     setIsSavingQuickEntry(false);
-    setSyncStatus(isLocalAiAvailable ? 'Запись сохранена и разобрана локальным ИИ.' : 'Запись сохранена локально.');
+    setSyncStatus(isLocalAiAvailable ? `${plan.feedback} Локальный ИИ помог нормализовать команду.` : `${plan.feedback} Сработал локальный разбор без ИИ.`);
   }
 
   function applyTemplateRecord(note: string) {

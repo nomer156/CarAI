@@ -3,12 +3,15 @@ import type { CSSProperties } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import QRCode from 'qrcode';
 import {
+  Disc3,
+  Droplets,
   BadgeCheck,
   CalendarDays,
   CarFront,
   Check,
   ChevronDown,
   ChevronUp,
+  Filter,
   Cog,
   Download,
   Gauge,
@@ -20,11 +23,13 @@ import {
   ScanLine,
   ShieldCheck,
   SunMedium,
+  Thermometer,
   Trash2,
   TriangleAlert,
   Users,
   Wrench,
   X,
+  Zap,
 } from 'lucide-react';
 import { availableCarColors, resolveCarVisual, vehicleBrandOptions } from './data/carCatalog';
 import { demoState } from './data/demoData';
@@ -201,6 +206,21 @@ function maintenanceUrgencyLabel(task: MaintenanceTask, mileageKm: number) {
   if (urgency === 'danger') return 'Пора менять';
   if (urgency === 'warning') return 'Скоро замена';
   return 'Запас есть';
+}
+
+function remainingPercent(task: MaintenanceTask, mileageKm: number) {
+  return Math.max(100 - maintenanceProgress(task, mileageKm), 0);
+}
+
+function maintenanceIcon(taskId: string) {
+  if (taskId === 'oil-service') return <Droplets size={18} />;
+  if (taskId === 'filters-service') return <Filter size={18} />;
+  if (taskId === 'brake-service' || taskId === 'brake-fluid') return <Disc3 size={18} />;
+  if (taskId === 'spark-service') return <Zap size={18} />;
+  if (taskId === 'coolant-service') return <Thermometer size={18} />;
+  if (taskId === 'transmission-service') return <Cog size={18} />;
+  if (taskId === 'timing-service') return <Wrench size={18} />;
+  return <ShieldCheck size={18} />;
 }
 
 function emptyQuickEntryDraft(): QuickEntryDraft {
@@ -553,6 +573,18 @@ function App() {
   const verifiedRecords = state.records.filter((record) => record.verified);
   const latestVerifiedRecord = [...verifiedRecords].sort((left, right) => right.date.localeCompare(left.date))[0];
   const nearestMaintenance = [...state.maintenance].sort((left, right) => remainingMileage(left, state.vehicle.mileageKm) - remainingMileage(right, state.vehicle.mileageKm))[0];
+  const sortedMaintenance = useMemo(
+    () => [...state.maintenance].sort((left, right) => remainingMileage(left, state.vehicle.mileageKm) - remainingMileage(right, state.vehicle.mileageKm)),
+    [state.maintenance, state.vehicle.mileageKm],
+  );
+  const overdueMaintenance = useMemo(
+    () => sortedMaintenance.filter((task) => maintenanceUrgency(task, state.vehicle.mileageKm) === 'danger'),
+    [sortedMaintenance, state.vehicle.mileageKm],
+  );
+  const warningMaintenance = useMemo(
+    () => sortedMaintenance.filter((task) => maintenanceUrgency(task, state.vehicle.mileageKm) === 'warning'),
+    [sortedMaintenance, state.vehicle.mileageKm],
+  );
   const oilTask = state.maintenance.find((task) => task.id === 'oil-service');
   const brakeTask = state.maintenance.find((task) => task.id === 'brake-service');
   const timingTask = state.maintenance.find((task) => task.id === 'timing-service');
@@ -1783,10 +1815,46 @@ function App() {
                       <strong>{state.parts.length} деталей</strong>
                     </div>
                   </div>
+                  {overdueMaintenance.length ? (
+                    <div className="maintenance-alert-stack">
+                      <div className="maintenance-alert-head">
+                        <strong>Просрочено по регламенту</strong>
+                        <span className="source-badge self">{overdueMaintenance.length} пунктов</span>
+                      </div>
+                      <div className="maintenance-alert-list">
+                        {overdueMaintenance.slice(0, 3).map((task) => (
+                          <article className="maintenance-alert-card danger" key={task.id}>
+                            <div className="maintenance-alert-icon">{maintenanceIcon(task.id)}</div>
+                            <div>
+                              <strong>{task.title}</strong>
+                              <p className="muted">Просрочка: {Math.abs(task.dueAtKm - state.vehicle.mileageKm).toLocaleString('ru-RU')} км</p>
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                    </div>
+                  ) : warningMaintenance.length ? (
+                    <div className="maintenance-alert-stack">
+                      <div className="maintenance-alert-head">
+                        <strong>Скоро подойдут к замене</strong>
+                        <span className="source-badge warning">{warningMaintenance.length} пунктов</span>
+                      </div>
+                      <div className="maintenance-alert-list">
+                        {warningMaintenance.slice(0, 3).map((task) => (
+                          <article className="maintenance-alert-card warning" key={task.id}>
+                            <div className="maintenance-alert-icon">{maintenanceIcon(task.id)}</div>
+                            <div>
+                              <strong>{task.title}</strong>
+                              <p className="muted">Осталось: {remainingMileage(task, state.vehicle.mileageKm).toLocaleString('ru-RU')} км</p>
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                 </article>
                 <article className="panel panel-wide maintenance-stack">
-                  {state.maintenance.length ? [...state.maintenance]
-                    .sort((left, right) => remainingMileage(left, state.vehicle.mileageKm) - remainingMileage(right, state.vehicle.mileageKm))
+                  {state.maintenance.length ? sortedMaintenance
                     .map((task) => {
                       const urgency = maintenanceUrgency(task, state.vehicle.mileageKm);
                       const isExpanded = expandedMaintenanceId === task.id;
@@ -1796,7 +1864,10 @@ function App() {
                           <button className="maintenance-toggle" onClick={() => setExpandedMaintenanceId((current) => current === task.id ? null : task.id)}>
                             <div className="maintenance-heading-block">
                               <div className="maintenance-title-row">
-                                <strong>{task.title}</strong>
+                                <div className="maintenance-title-main">
+                                  <span className={`maintenance-task-icon ${urgency}`}>{maintenanceIcon(task.id)}</span>
+                                  <strong>{task.title}</strong>
+                                </div>
                                 <span className={`source-badge ${urgency === 'danger' ? 'self' : urgency === 'warning' ? 'warning' : 'service'}`}>{maintenanceUrgencyLabel(task, state.vehicle.mileageKm)}</span>
                               </div>
                               <p className="muted">Следующая отметка до {task.dueAtKm.toLocaleString('ru-RU')} км</p>
@@ -1807,6 +1878,7 @@ function App() {
                             <div><span>Осталось</span><strong>{remainingMileage(task, state.vehicle.mileageKm).toLocaleString('ru-RU')} км</strong></div>
                             <div><span>Последний раз</span><strong>{task.lastDoneKm.toLocaleString('ru-RU')} км</strong></div>
                             <div><span>Интервал</span><strong>{task.intervalKm.toLocaleString('ru-RU')} км</strong></div>
+                            <div><span>Остаток ресурса</span><strong>{remainingPercent(task, state.vehicle.mileageKm).toFixed(0)}%</strong></div>
                           </div>
                           <div className="progress-track maintenance-progress-track">
                             <div className={`progress-bar ${urgency}`} style={{ width: `${maintenanceProgress(task, state.vehicle.mileageKm)}%` }} />

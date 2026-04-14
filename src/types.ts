@@ -60,6 +60,10 @@ export type MaintenanceTask = {
   priority: 'low' | 'medium' | 'high';
   notes: string;
   items: string[];
+  lastServiceAt?: string;
+  lastServiceMileageKm?: number;
+  lastServiceOrigin?: 'journal' | 'part' | 'manual';
+  lastServiceSubject?: string;
 };
 
 export type ServiceRecord = {

@@ -761,6 +761,10 @@ h2 {
   border-color: rgba(203, 90, 96, 0.32);
 }
 
+.maintenance-card.recent-service {
+  box-shadow: 0 0 0 1px rgba(95, 167, 216, 0.16) inset;
+}
+
 .maintenance-details {
   margin-top: 10px;
 }
@@ -783,6 +787,14 @@ h2 {
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
+}
+
+.maintenance-header-badges {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .maintenance-task-icon,
@@ -1119,6 +1131,16 @@ h2 {
   border-radius: 16px;
   border: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.05);
+}
+
+.maintenance-service-note {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(95, 167, 216, 0.18);
+  background: linear-gradient(180deg, rgba(95, 167, 216, 0.12), transparent), var(--panel-strong);
 }
 
 .timeline-item {

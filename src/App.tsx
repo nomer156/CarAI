@@ -223,6 +223,13 @@ function maintenanceIcon(taskId: string) {
   return <ShieldCheck size={18} />;
 }
 
+function maintenanceUpdateLabel(origin?: MaintenanceTask['lastServiceOrigin']) {
+  if (origin === 'part') return 'Обновлено деталью';
+  if (origin === 'journal') return 'Обновлено записью';
+  if (origin === 'manual') return 'Отмечено вручную';
+  return '';
+}
+
 function emptyQuickEntryDraft(): QuickEntryDraft {
   return {
     note: '',
@@ -290,7 +297,14 @@ function buildLocalCar(current: GarageState) {
   };
 }
 
-function updateMaintenanceTasks(tasks: MaintenanceTask[], mileageKm: number, occurredAt: string, subject: string, matchedTaskId?: string) {
+function updateMaintenanceTasks(
+  tasks: MaintenanceTask[],
+  mileageKm: number,
+  occurredAt: string,
+  subject: string,
+  matchedTaskId?: string,
+  origin: MaintenanceTask['lastServiceOrigin'] = 'journal',
+) {
   const matchId = matchedTaskId ?? maintenanceMatchers.find((item) => item.patterns.some((pattern) => pattern.test(subject)))?.id;
   if (!matchId) return tasks;
   return tasks.map((task) => (task.id === matchId ? {
@@ -298,6 +312,10 @@ function updateMaintenanceTasks(tasks: MaintenanceTask[], mileageKm: number, occ
     lastDoneKm: mileageKm,
     dueAtKm: mileageKm + task.intervalKm,
     notes: `Последняя отметка: ${formatLongDate(occurredAt)} • ${subject}.`,
+    lastServiceAt: occurredAt,
+    lastServiceMileageKm: mileageKm,
+    lastServiceOrigin: origin,
+    lastServiceSubject: subject,
   } : task));
 }
 
@@ -356,6 +374,11 @@ function hydrateMaintenancePlan(tasks: MaintenanceTask[], brand: string, model: 
 function findQuickEntryCatalogItem(draft: QuickEntryDraft) {
   return getServiceCatalogItem(draft.catalogItemId)
     ?? findServiceCatalogItem(draft.partName, draft.assembly, draft.subAssembly);
+}
+
+function resolvePartMaintenanceTaskId(partName: string, assembly?: string, subAssembly?: string) {
+  return findServiceCatalogItem(partName, assembly, subAssembly)?.maintenanceTaskId
+    ?? maintenanceMatchers.find((item) => item.patterns.some((pattern) => pattern.test(partName)))?.id;
 }
 
 function emptyMaintenanceEditDraft(task?: MaintenanceTask): MaintenanceEditDraft {
@@ -755,6 +778,10 @@ function App() {
         lastDoneKm: nextMileage,
         dueAtKm: nextMileage + task.intervalKm,
         notes: `Последняя ручная отметка: ${nextMileage.toLocaleString('ru-RU')} км. ${task.notes}`,
+        lastServiceAt: todayInputValue(),
+        lastServiceMileageKm: nextMileage,
+        lastServiceOrigin: 'manual',
+        lastServiceSubject: task.title,
       } : task),
     }));
     setEditingMaintenanceId(null);
@@ -825,7 +852,7 @@ function App() {
 
         const subject = [record.note, record.assembly, record.subAssembly, record.partName].filter(Boolean).join(' ');
         const nextVehicleMileageKm = mileage && mileage > current.vehicle.mileageKm ? mileage : current.vehicle.mileageKm;
-        const nextMaintenance = mileage ? updateMaintenanceTasks(current.maintenance, mileage, quickEntryDraft.occurredAt, subject, selectedItem?.maintenanceTaskId) : current.maintenance;
+        const nextMaintenance = mileage ? updateMaintenanceTasks(current.maintenance, mileage, quickEntryDraft.occurredAt, subject, selectedItem?.maintenanceTaskId, 'journal') : current.maintenance;
         const nextJournal = editingJournalId ? current.journal.map((item) => item.id === editingJournalId ? record : item) : [record, ...current.journal];
 
         return {
@@ -873,6 +900,11 @@ function App() {
       setSyncStatus('Для детали нужны хотя бы название и OEM.');
       return;
     }
+    const installedMileageKm = toOptionalNumber(draft.installedMileageKm) ?? null;
+    if (installedMileageKm !== null && installedMileageKm > state.vehicle.mileageKm) {
+      setSyncStatus('Пробег установки детали не может быть больше текущего пробега автомобиля.');
+      return;
+    }
     if (source === 'service' && state.role !== 'owner' && session && hasCloudProfile && !activeServiceOwnerCode.trim()) {
       setSyncStatus('Сначала выберите owner ID, для которого сохраняется деталь.');
       return;
@@ -888,9 +920,12 @@ function App() {
       note: draft.note.trim(),
       installationSource: source,
       installedAt: draft.installedAt || null,
-      installedMileageKm: toOptionalNumber(draft.installedMileageKm) ?? null,
+      installedMileageKm,
       nextReplacementKm: toOptionalNumber(draft.nextReplacementKm) ?? null,
     };
+    const maintenanceTaskId = source === 'self'
+      ? (selectedOwnerPartItem?.maintenanceTaskId ?? resolvePartMaintenanceTaskId(nextPart.name, ownerPartAssembly, ownerPartSubAssembly))
+      : resolvePartMaintenanceTaskId(nextPart.name);
 
     try {
       if (session && hasCloudProfile) {
@@ -913,7 +948,7 @@ function App() {
         ...current,
         parts: [nextPart, ...current.parts],
         maintenance: nextPart.installedMileageKm
-          ? updateMaintenanceTasks(current.maintenance, nextPart.installedMileageKm, nextPart.installedAt ?? todayInputValue(), `${nextPart.name} ${nextPart.note}`.trim())
+          ? updateMaintenanceTasks(current.maintenance, nextPart.installedMileageKm, nextPart.installedAt ?? todayInputValue(), `${nextPart.name} ${nextPart.note}`.trim(), maintenanceTaskId, 'part')
           : current.maintenance,
       }));
 
@@ -952,6 +987,11 @@ function App() {
 
   async function savePartEdit() {
     if (!editingPartId) return;
+    const installedMileageKm = toOptionalNumber(editingPartDraft.installedMileageKm) ?? null;
+    if (installedMileageKm !== null && installedMileageKm > state.vehicle.mileageKm) {
+      setSyncStatus('Пробег установки детали не может быть больше текущего пробега автомобиля.');
+      return;
+    }
     const updatedPart: Part = {
       id: editingPartId,
       name: editingPartDraft.name.trim(),
@@ -962,9 +1002,10 @@ function App() {
       note: editingPartDraft.note.trim(),
       installationSource: state.parts.find((part) => part.id === editingPartId)?.installationSource ?? 'self',
       installedAt: editingPartDraft.installedAt || null,
-      installedMileageKm: toOptionalNumber(editingPartDraft.installedMileageKm) ?? null,
+      installedMileageKm,
       nextReplacementKm: toOptionalNumber(editingPartDraft.nextReplacementKm) ?? null,
     };
+    const maintenanceTaskId = resolvePartMaintenanceTaskId(updatedPart.name);
 
     try {
       if (session && hasCloudProfile) {
@@ -984,7 +1025,13 @@ function App() {
         });
       }
 
-      setState((current) => ({ ...current, parts: current.parts.map((part) => part.id === editingPartId ? updatedPart : part) }));
+      setState((current) => ({
+        ...current,
+        parts: current.parts.map((part) => part.id === editingPartId ? updatedPart : part),
+        maintenance: updatedPart.installedMileageKm
+          ? updateMaintenanceTasks(current.maintenance, updatedPart.installedMileageKm, updatedPart.installedAt ?? todayInputValue(), `${updatedPart.name} ${updatedPart.note}`.trim(), maintenanceTaskId, 'part')
+          : current.maintenance,
+      }));
       cancelPartEdit();
       setSyncStatus('Карточка детали обновлена.');
     } catch (error) {
@@ -1859,8 +1906,9 @@ function App() {
                       const urgency = maintenanceUrgency(task, state.vehicle.mileageKm);
                       const isExpanded = expandedMaintenanceId === task.id;
                       const isEditing = editingMaintenanceId === task.id;
+                      const isRecentService = task.lastServiceOrigin === 'part' || task.lastServiceOrigin === 'journal' || task.lastServiceOrigin === 'manual';
                       return (
-                        <article className={`maintenance-card ${urgency}`} key={task.id}>
+                        <article className={`maintenance-card ${urgency} ${isRecentService ? 'recent-service' : ''}`} key={task.id}>
                           <button className="maintenance-toggle" onClick={() => setExpandedMaintenanceId((current) => current === task.id ? null : task.id)}>
                             <div className="maintenance-heading-block">
                               <div className="maintenance-title-row">
@@ -1868,7 +1916,10 @@ function App() {
                                   <span className={`maintenance-task-icon ${urgency}`}>{maintenanceIcon(task.id)}</span>
                                   <strong>{task.title}</strong>
                                 </div>
-                                <span className={`source-badge ${urgency === 'danger' ? 'self' : urgency === 'warning' ? 'warning' : 'service'}`}>{maintenanceUrgencyLabel(task, state.vehicle.mileageKm)}</span>
+                                <div className="maintenance-header-badges">
+                                  {task.lastServiceOrigin ? <span className={`source-badge ${task.lastServiceOrigin === 'part' ? 'service' : task.lastServiceOrigin === 'manual' ? 'warning' : 'neutral'}`}>{maintenanceUpdateLabel(task.lastServiceOrigin)}</span> : null}
+                                  <span className={`source-badge ${urgency === 'danger' ? 'self' : urgency === 'warning' ? 'warning' : 'service'}`}>{maintenanceUrgencyLabel(task, state.vehicle.mileageKm)}</span>
+                                </div>
                               </div>
                               <p className="muted">Следующая отметка до {task.dueAtKm.toLocaleString('ru-RU')} км</p>
                             </div>
@@ -1898,6 +1949,13 @@ function App() {
                                     <button className="ghost-button compact" onClick={cancelEditMaintenance}><X size={14} />Отмена</button>
                                   </div>
                                   <p className="muted">Укажите реальный пробег последней замены. Он не может быть больше текущего пробега авто.</p>
+                                </div>
+                              ) : null}
+                              {task.lastServiceOrigin && task.lastServiceAt ? (
+                                <div className="maintenance-service-note">
+                                  <strong>{maintenanceUpdateLabel(task.lastServiceOrigin)}</strong>
+                                  <p className="muted">{formatLongDate(task.lastServiceAt)} • {task.lastServiceMileageKm?.toLocaleString('ru-RU')} км</p>
+                                  {task.lastServiceSubject ? <p className="muted">{task.lastServiceSubject}</p> : null}
                                 </div>
                               ) : null}
                               <ul className="stack-list">{task.items.map((item) => <li key={item}>{item}</li>)}</ul>

@@ -37,6 +37,13 @@ function normalizeGarageState(state: GarageState | undefined): GarageState {
       assembly: record.assembly ?? undefined,
       subAssembly: record.subAssembly ?? undefined,
     })),
+    maintenance: (state.maintenance ?? demoState.maintenance).map((task) => ({
+      ...task,
+      lastServiceAt: task.lastServiceAt ?? undefined,
+      lastServiceMileageKm: task.lastServiceMileageKm ?? undefined,
+      lastServiceOrigin: task.lastServiceOrigin ?? undefined,
+      lastServiceSubject: task.lastServiceSubject ?? undefined,
+    })),
     parts: (state.parts ?? demoState.parts).map((part) => ({
       ...part,
       installedAt: part.installedAt ?? null,

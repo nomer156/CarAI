@@ -749,8 +749,34 @@ h2 {
   background: var(--panel-strong);
 }
 
+.maintenance-card.ok {
+  border-color: rgba(53, 146, 108, 0.18);
+}
+
+.maintenance-card.warning {
+  border-color: rgba(178, 124, 43, 0.3);
+}
+
+.maintenance-card.danger {
+  border-color: rgba(203, 90, 96, 0.32);
+}
+
 .maintenance-details {
   margin-top: 10px;
+}
+
+.maintenance-heading-block {
+  display: grid;
+  gap: 6px;
+  text-align: left;
+}
+
+.maintenance-title-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
 }
 
 .maintenance-kicker {
@@ -762,9 +788,44 @@ h2 {
   text-transform: uppercase;
 }
 
-.maintenance-summary-grid,
+.maintenance-summary-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .service-summary-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.maintenance-summary-card {
+  display: grid;
+  gap: 6px;
+  min-height: 148px;
+}
+
+.maintenance-summary-card.ok {
+  border: 1px solid rgba(53, 146, 108, 0.2);
+  background: linear-gradient(180deg, rgba(53, 146, 108, 0.16), transparent), var(--panel-strong);
+}
+
+.maintenance-summary-card.warning {
+  border: 1px solid rgba(178, 124, 43, 0.22);
+  background: linear-gradient(180deg, rgba(178, 124, 43, 0.16), transparent), var(--panel-strong);
+}
+
+.maintenance-summary-card.danger {
+  border: 1px solid rgba(203, 90, 96, 0.24);
+  background: linear-gradient(180deg, rgba(203, 90, 96, 0.16), transparent), var(--panel-strong);
+}
+
+.maintenance-summary-card.neutral {
+  border: 1px solid var(--border);
+}
+
+.maintenance-summary-label {
+  color: var(--secondary);
+  font-size: 0.76rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
 .maintenance-meta-grid {
@@ -952,6 +1013,40 @@ h2 {
   height: 100%;
   border-radius: inherit;
   background: linear-gradient(90deg, var(--accent), #f3c36e);
+}
+
+.progress-bar.ok {
+  background: linear-gradient(90deg, #2f8f6e, #67d7aa);
+}
+
+.progress-bar.warning {
+  background: linear-gradient(90deg, #d08a37, #f0c062);
+}
+
+.progress-bar.danger {
+  background: linear-gradient(90deg, #c24a55, #f58f98);
+}
+
+.maintenance-progress-track {
+  margin-bottom: 10px;
+}
+
+.maintenance-actions-row,
+.maintenance-edit-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.maintenance-edit-card {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .timeline-item {

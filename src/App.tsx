@@ -33,6 +33,7 @@ import {
   getServiceAssemblies,
   getServiceCatalogItem,
   getServiceSubAssemblies,
+  serviceCatalog,
   suggestServiceCatalogItems,
 } from './data/serviceCatalog';
 import { buildMaintenanceTemplateForVehicle, resolveVehicleDefaults } from './data/vehiclePresets';
@@ -88,12 +89,29 @@ type QuickEntryPreset = {
   catalogItemId: string;
   hint: string;
 };
+type MaintenanceEditDraft = {
+  lastDoneKm: string;
+};
 
 const ownerTabs = ['overview', 'parts', 'maintenance', 'history'] as const;
 const mechanicTabs = ['overview', 'parts', 'maintenance', 'history'] as const;
 const serviceAdminTabs = ['overview', 'maintenance', 'history'] as const;
 const companyAdminTabs = ['overview', 'maintenance', 'history'] as const;
 const APP_VERSION = 'v0.2';
+const consumableCatalogIds = new Set([
+  'engine-oil',
+  'oil-filter',
+  'air-filter',
+  'fuel-filter',
+  'spark-plugs',
+  'coolant',
+  'gearbox-oil-manual',
+  'gearbox-oil-auto',
+  'gearbox-filter-auto',
+  'brake-fluid',
+  'cabin-filter',
+  'wiper-blades',
+]);
 const quickEntryPresets: QuickEntryPreset[] = [
   {
     id: 'engine-oil',
@@ -108,16 +126,10 @@ const quickEntryPresets: QuickEntryPreset[] = [
     hint: 'Быстрый шаблон для масла АКПП. При необходимости вручную переключите узел на МКПП.',
   },
   {
-    id: 'front-pads',
-    label: 'Колодки',
-    catalogItemId: 'front-pads',
-    hint: 'Удобно сохранить бренд, пробег установки и комментарий вроде "не подошли" или "быстро стерлись".',
-  },
-  {
-    id: 'timing-kit',
-    label: 'ГРМ',
-    catalogItemId: 'timing-kit',
-    hint: 'Для ГРМ лучше сразу указать дату, пробег установки и следующий ориентир по замене.',
+    id: 'brake-fluid',
+    label: 'Тормозная жидкость',
+    catalogItemId: 'brake-fluid',
+    hint: 'Подходит для регулярной сервисной записи с понятным следующим интервалом.',
   },
   {
     id: 'cabin-filter',
@@ -126,16 +138,10 @@ const quickEntryPresets: QuickEntryPreset[] = [
     hint: 'Хороший шаблон для сезонного обслуживания и мелких расходников без лишних тапов.',
   },
   {
-    id: 'clutch-kit',
-    label: 'Сцепление',
-    catalogItemId: 'clutch-kit',
-    hint: 'Для механики удобно сразу записывать комплект сцепления, выжимной и пробег установки.',
-  },
-  {
-    id: 'front-shock',
-    label: 'Подвеска',
-    catalogItemId: 'front-shock',
-    hint: 'Шаблон для амортизаторов, рычагов и стоек стабилизатора с ручным комментарием по поведению машины.',
+    id: 'coolant',
+    label: 'Антифриз',
+    catalogItemId: 'coolant',
+    hint: 'Удобно фиксировать промывку системы и замену охлаждающей жидкости вместе с пробегом.',
   },
 ];
 
@@ -181,6 +187,20 @@ function maintenanceProgress(task: MaintenanceTask, mileageKm: number) {
 
 function remainingMileage(task: MaintenanceTask, mileageKm: number) {
   return Math.max(task.dueAtKm - mileageKm, 0);
+}
+
+function maintenanceUrgency(task: MaintenanceTask, mileageKm: number) {
+  const remaining = task.dueAtKm - mileageKm;
+  if (remaining <= 0) return 'danger';
+  if (remaining <= task.intervalKm * 0.2) return 'warning';
+  return 'ok';
+}
+
+function maintenanceUrgencyLabel(task: MaintenanceTask, mileageKm: number) {
+  const urgency = maintenanceUrgency(task, mileageKm);
+  if (urgency === 'danger') return 'Пора менять';
+  if (urgency === 'warning') return 'Скоро замена';
+  return 'Запас есть';
 }
 
 function emptyQuickEntryDraft(): QuickEntryDraft {
@@ -318,6 +338,12 @@ function findQuickEntryCatalogItem(draft: QuickEntryDraft) {
     ?? findServiceCatalogItem(draft.partName, draft.assembly, draft.subAssembly);
 }
 
+function emptyMaintenanceEditDraft(task?: MaintenanceTask): MaintenanceEditDraft {
+  return {
+    lastDoneKm: task ? String(task.lastDoneKm) : '',
+  };
+}
+
 function EmptyState({ title, text }: { title: string; text: string }) {
   return (
     <div className="empty-state">
@@ -352,6 +378,8 @@ function App() {
   const [isQuickEntryExpanded, setIsQuickEntryExpanded] = useState(false);
   const [isSavingQuickEntry, setIsSavingQuickEntry] = useState(false);
   const [editingJournalId, setEditingJournalId] = useState<string | null>(null);
+  const [editingMaintenanceId, setEditingMaintenanceId] = useState<string | null>(null);
+  const [maintenanceEditDraft, setMaintenanceEditDraft] = useState<MaintenanceEditDraft>(emptyMaintenanceEditDraft());
   const [activeQuickHintId, setActiveQuickHintId] = useState<string | null>(null);
   const [swipedRecordId, setSwipedRecordId] = useState<string | null>(null);
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
@@ -360,6 +388,9 @@ function App() {
   const [serviceCenterCity, setServiceCenterCity] = useState('');
   const [serviceCenterBays, setServiceCenterBays] = useState('');
   const [ownerPartDraft, setOwnerPartDraft] = useState<PartDraft>(emptyPartDraft());
+  const [ownerPartAssembly, setOwnerPartAssembly] = useState('');
+  const [ownerPartSubAssembly, setOwnerPartSubAssembly] = useState('');
+  const [ownerPartCatalogId, setOwnerPartCatalogId] = useState<string | undefined>();
   const [servicePartDraft, setServicePartDraft] = useState<PartDraft>(emptyPartDraft());
   const [editingPartId, setEditingPartId] = useState<string | null>(null);
   const [editingPartDraft, setEditingPartDraft] = useState<PartDraft>(emptyPartDraft());
@@ -525,14 +556,25 @@ function App() {
   const oilTask = state.maintenance.find((task) => task.id === 'oil-service');
   const brakeTask = state.maintenance.find((task) => task.id === 'brake-service');
   const timingTask = state.maintenance.find((task) => task.id === 'timing-service');
+  const consumableCatalogItems = useMemo(() => serviceCatalog.filter((item) => consumableCatalogIds.has(item.id)), []);
   const activeQuickPreset = quickEntryPresets.find((preset) => preset.id === activeQuickHintId) ?? null;
   const activeQuickPresetItem = getServiceCatalogItem(activeQuickPreset?.catalogItemId);
-  const assemblyOptions = useMemo(() => getServiceAssemblies(), []);
-  const subAssemblyOptions = useMemo(() => getServiceSubAssemblies(quickEntryDraft.assembly), [quickEntryDraft.assembly]);
+  const assemblyOptions = useMemo(() => [...new Set(consumableCatalogItems.map((item) => item.assembly))], [consumableCatalogItems]);
+  const subAssemblyOptions = useMemo(
+    () => [...new Set(consumableCatalogItems.filter((item) => !quickEntryDraft.assembly || item.assembly === quickEntryDraft.assembly).map((item) => item.subAssembly))],
+    [consumableCatalogItems, quickEntryDraft.assembly],
+  );
   const selectedQuickEntryItem = useMemo(() => findQuickEntryCatalogItem(quickEntryDraft), [quickEntryDraft]);
-  const quickEntrySuggestions = useMemo(
-    () => suggestServiceCatalogItems(quickEntryDraft.partName, quickEntryDraft.assembly, quickEntryDraft.subAssembly),
-    [quickEntryDraft.partName, quickEntryDraft.assembly, quickEntryDraft.subAssembly],
+  const quickEntrySuggestions = useMemo(() => suggestServiceCatalogItems(quickEntryDraft.partName, quickEntryDraft.assembly, quickEntryDraft.subAssembly)
+    .filter((item) => consumableCatalogIds.has(item.id)), [quickEntryDraft.partName, quickEntryDraft.assembly, quickEntryDraft.subAssembly]);
+  const ownerPartSubAssemblyOptions = useMemo(() => getServiceSubAssemblies(ownerPartAssembly), [ownerPartAssembly]);
+  const ownerPartSuggestions = useMemo(
+    () => suggestServiceCatalogItems(ownerPartDraft.name, ownerPartAssembly, ownerPartSubAssembly),
+    [ownerPartDraft.name, ownerPartAssembly, ownerPartSubAssembly],
+  );
+  const selectedOwnerPartItem = useMemo(
+    () => getServiceCatalogItem(ownerPartCatalogId) ?? findServiceCatalogItem(ownerPartDraft.name, ownerPartAssembly, ownerPartSubAssembly),
+    [ownerPartCatalogId, ownerPartDraft.name, ownerPartAssembly, ownerPartSubAssembly],
   );
   const urgentParts = useMemo(() => [...state.parts]
     .filter((part) => part.nextReplacementKm && part.nextReplacementKm <= state.vehicle.mileageKm + 3000)
@@ -575,6 +617,9 @@ function App() {
     });
     const defaults = resolveVehicleDefaults(brand.brand, brand.models[0], nextDate);
     setOwnerPartDraft(emptyPartDraft(defaults.defaultMileageKm));
+    setOwnerPartAssembly('');
+    setOwnerPartSubAssembly('');
+    setOwnerPartCatalogId(undefined);
     setQuickEntryDraft(emptyQuickEntryDraft());
     setIsVehicleEditorOpen(true);
     setSyncStatus('Открыта новая машина с предзаполненным регламентом и средним стартовым пробегом.');
@@ -586,12 +631,18 @@ function App() {
     setState((current) => applyVehiclePresetState(current, brand, nextModel));
     const defaults = resolveVehicleDefaults(brand, nextModel);
     setOwnerPartDraft((current) => emptyPartDraft(current.installedMileageKm ? Number.parseInt(current.installedMileageKm, 10) : defaults.defaultMileageKm));
+    setOwnerPartAssembly('');
+    setOwnerPartSubAssembly('');
+    setOwnerPartCatalogId(undefined);
   }
 
   function updateVehicleModel(model: string) {
     setState((current) => applyVehiclePresetState(current, current.vehicle.brand, model));
     const defaults = resolveVehicleDefaults(state.vehicle.brand, model);
     setOwnerPartDraft((current) => emptyPartDraft(current.installedMileageKm ? Number.parseInt(current.installedMileageKm, 10) : defaults.defaultMileageKm));
+    setOwnerPartAssembly('');
+    setOwnerPartSubAssembly('');
+    setOwnerPartCatalogId(undefined);
   }
 
   function exportRecords() {
@@ -633,6 +684,50 @@ function App() {
     }));
     setIsQuickEntryExpanded(true);
     quickEntryInputRef.current?.focus();
+  }
+
+  function selectOwnerPartItem(itemId: string) {
+    const item = getServiceCatalogItem(itemId);
+    if (!item) return;
+    setOwnerPartAssembly(item.assembly);
+    setOwnerPartSubAssembly(item.subAssembly);
+    setOwnerPartCatalogId(item.id);
+    setOwnerPartDraft((current) => ({ ...current, name: item.label }));
+  }
+
+  function beginEditMaintenance(task: MaintenanceTask) {
+    setExpandedMaintenanceId(task.id);
+    setEditingMaintenanceId(task.id);
+    setMaintenanceEditDraft(emptyMaintenanceEditDraft(task));
+  }
+
+  function cancelEditMaintenance() {
+    setEditingMaintenanceId(null);
+    setMaintenanceEditDraft(emptyMaintenanceEditDraft());
+  }
+
+  function saveMaintenanceEdit(taskId: string) {
+    const nextMileage = toOptionalNumber(maintenanceEditDraft.lastDoneKm);
+    if (nextMileage === undefined) {
+      setSyncStatus('Укажите пробег, на котором реально выполнялась работа.');
+      return;
+    }
+    if (nextMileage > state.vehicle.mileageKm) {
+      setSyncStatus('Пробег обслуживания не может быть больше текущего пробега автомобиля.');
+      return;
+    }
+    setState((current) => ({
+      ...current,
+      maintenance: current.maintenance.map((task) => task.id === taskId ? {
+        ...task,
+        lastDoneKm: nextMileage,
+        dueAtKm: nextMileage + task.intervalKm,
+        notes: `Последняя ручная отметка: ${nextMileage.toLocaleString('ru-RU')} км. ${task.notes}`,
+      } : task),
+    }));
+    setEditingMaintenanceId(null);
+    setMaintenanceEditDraft(emptyMaintenanceEditDraft());
+    setSyncStatus('Регламент обновлён вручную.');
   }
 
   function beginEditJournal(record: JournalRecord) {
@@ -790,7 +885,12 @@ function App() {
           : current.maintenance,
       }));
 
-      if (source === 'self') setOwnerPartDraft(emptyPartDraft(state.vehicle.mileageKm));
+      if (source === 'self') {
+        setOwnerPartDraft(emptyPartDraft(state.vehicle.mileageKm));
+        setOwnerPartAssembly('');
+        setOwnerPartSubAssembly('');
+        setOwnerPartCatalogId(undefined);
+      }
       else setServicePartDraft(emptyPartDraft(state.vehicle.mileageKm));
       setSyncStatus(source === 'self' ? 'Деталь добавлена в личную карточку.' : 'Деталь сохранена от имени СТО.');
     } catch (error) {
@@ -1456,7 +1556,7 @@ function App() {
                   <div className="panel-heading owner-entry-heading">
                     <div>
                       <h2>{editingJournalId ? 'Редактировать личную запись' : 'Ручная запись обслуживания'}</h2>
-                      <p className="muted">Выберите узел, подузел и начните печатать деталь или работу. Подсказки появляются сразу по ходу ввода.</p>
+                      <p className="muted">Здесь только расходники и сервисные жидкости: масло, фильтры, антифриз, масло коробки и другие регулярные замены.</p>
                     </div>
                     <div className="owner-entry-actions">
                       {quickEntryPresets.map((preset) => (
@@ -1520,7 +1620,7 @@ function App() {
                             partName: event.target.value,
                             catalogItemId: undefined,
                           }))}
-                          placeholder="Начните вводить: масло, колодки, сцепление, шрус..."
+                          placeholder="Начните вводить: масло, фильтр, антифриз, тормозная жидкость..."
                         />
                       </div>
                       {(quickEntryDraft.partName.trim().length >= 1 || (quickEntryDraft.assembly && quickEntryDraft.subAssembly)) && quickEntrySuggestions.length ? (
@@ -1554,9 +1654,6 @@ function App() {
                           <input value={quickEntryDraft.mileage} onChange={(event) => setQuickEntryDraft((current) => ({ ...current, mileage: event.target.value }))} placeholder="Пробег, км" />
                         </div>
                         <div className="field-row">
-                          <input value={quickEntryDraft.partName} onChange={(event) => setQuickEntryDraft((current) => ({ ...current, partName: event.target.value }))} placeholder="Деталь / расходник" />
-                        </div>
-                        <div className="field-row">
                           <input value={quickEntryDraft.cost} onChange={(event) => setQuickEntryDraft((current) => ({ ...current, cost: event.target.value }))} placeholder="Стоимость" />
                         </div>
                         <div className="field-row">
@@ -1575,9 +1672,172 @@ function App() {
               </section>
             ) : null}
 
-            {state.role === 'owner' && activeTab === 'parts' ? <section className="grid"><article className="panel"><div className="panel-heading"><div><h2>Добавить деталь</h2><p className="muted">Карточка сохраняет OEM, дату установки, пробег и комментарии по ресурсу.</p></div><Plus size={20} /></div><div className="cloud-card"><div className="field-row"><input value={ownerPartDraft.name} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Название" /></div><div className="field-row"><input value={ownerPartDraft.oem} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, oem: event.target.value }))} placeholder="OEM" /></div><div className="field-row"><input value={ownerPartDraft.manufacturer} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, manufacturer: event.target.value }))} placeholder="Производитель" /></div><div className="field-row"><input value={ownerPartDraft.price} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, price: event.target.value }))} placeholder="Цена" /></div><div className="field-row"><input type="date" value={ownerPartDraft.installedAt} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, installedAt: event.target.value }))} /></div><div className="field-row"><input value={ownerPartDraft.installedMileageKm} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, installedMileageKm: event.target.value }))} placeholder="Пробег установки" /></div><div className="field-row"><input value={ownerPartDraft.nextReplacementKm} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, nextReplacementKm: event.target.value }))} placeholder="Следующая замена, км" /></div><div className="field-row"><select value={ownerPartDraft.status} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, status: event.target.value as Part['status'] }))}><option value="ok">Норма</option><option value="watch">Контроль</option><option value="replace">Замена</option></select></div><div className="field-row"><input value={ownerPartDraft.note} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, note: event.target.value }))} placeholder="Комментарий: подошли / быстро стерлись / что важно учесть" /></div><button className="primary-button" onClick={() => addPart('self')}>Добавить деталь</button></div></article><article className="panel panel-wide"><div className="parts-grid">{state.parts.length ? state.parts.map(renderPartCard) : <EmptyState title="Карточек деталей пока нет" text="Добавьте первую деталь, чтобы сохранить OEM, дату установки и пробег замены." />}</div></article></section> : null}
+            {state.role === 'owner' && activeTab === 'parts' ? (
+              <section className="grid">
+                <article className="panel">
+                  <div className="panel-heading">
+                    <div>
+                      <h2>Добавить деталь</h2>
+                      <p className="muted">Подберите узел и деталь через каталог, затем сохраните OEM, установку и комментарии по ресурсу.</p>
+                    </div>
+                    <Plus size={20} />
+                  </div>
+                  <div className="cloud-card">
+                    <div className="quick-entry-catalog-grid">
+                      <div className="field-row">
+                        <select
+                          value={ownerPartAssembly}
+                          onChange={(event) => {
+                            setOwnerPartAssembly(event.target.value);
+                            setOwnerPartSubAssembly('');
+                            setOwnerPartCatalogId(undefined);
+                            setOwnerPartDraft((current) => ({ ...current, name: '' }));
+                          }}
+                        >
+                          <option value="">Выберите узел</option>
+                          {getServiceAssemblies().map((assembly) => <option key={assembly} value={assembly}>{assembly}</option>)}
+                        </select>
+                      </div>
+                      <div className="field-row">
+                        <select
+                          value={ownerPartSubAssembly}
+                          onChange={(event) => {
+                            setOwnerPartSubAssembly(event.target.value);
+                            setOwnerPartCatalogId(undefined);
+                            setOwnerPartDraft((current) => ({ ...current, name: '' }));
+                          }}
+                          disabled={!ownerPartAssembly}
+                        >
+                          <option value="">{ownerPartAssembly ? 'Выберите подузел' : 'Сначала выберите узел'}</option>
+                          {ownerPartSubAssemblyOptions.map((subAssembly) => <option key={subAssembly} value={subAssembly}>{subAssembly}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="quick-entry-search">
+                      <div className="field-row">
+                        <input
+                          value={ownerPartDraft.name}
+                          onChange={(event) => {
+                            setOwnerPartCatalogId(undefined);
+                            setOwnerPartDraft((current) => ({ ...current, name: event.target.value }));
+                          }}
+                          placeholder="Начните вводить: сцепление, шрус, амортизатор, рычаг..."
+                        />
+                      </div>
+                      {(ownerPartDraft.name.trim().length >= 1 || (ownerPartAssembly && ownerPartSubAssembly)) && ownerPartSuggestions.length ? (
+                        <div className="quick-entry-suggestions">
+                          {ownerPartSuggestions.map((item) => (
+                            <button key={item.id} className="quick-entry-suggestion" onClick={() => selectOwnerPartItem(item.id)}>
+                              <strong>{item.label}</strong>
+                              <span>{item.assembly} • {item.subAssembly}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                    {selectedOwnerPartItem ? <p className="quick-entry-selected muted">Выбрано: {selectedOwnerPartItem.assembly} → {selectedOwnerPartItem.subAssembly} → {selectedOwnerPartItem.label}</p> : null}
+                    <div className="field-row"><input value={ownerPartDraft.oem} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, oem: event.target.value }))} placeholder="OEM" /></div>
+                    <div className="field-row"><input value={ownerPartDraft.manufacturer} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, manufacturer: event.target.value }))} placeholder="Производитель" /></div>
+                    <div className="field-row"><input value={ownerPartDraft.price} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, price: event.target.value }))} placeholder="Цена" /></div>
+                    <div className="field-row"><input type="date" value={ownerPartDraft.installedAt} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, installedAt: event.target.value }))} /></div>
+                    <div className="field-row"><input value={ownerPartDraft.installedMileageKm} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, installedMileageKm: event.target.value }))} placeholder="Пробег установки" /></div>
+                    <div className="field-row"><input value={ownerPartDraft.nextReplacementKm} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, nextReplacementKm: event.target.value }))} placeholder="Следующая замена, км" /></div>
+                    <div className="field-row"><select value={ownerPartDraft.status} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, status: event.target.value as Part['status'] }))}><option value="ok">Норма</option><option value="watch">Контроль</option><option value="replace">Замена</option></select></div>
+                    <div className="field-row"><input value={ownerPartDraft.note} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, note: event.target.value }))} placeholder="Комментарий: подошли / быстро стерлись / что важно учесть" /></div>
+                    <button className="primary-button" onClick={() => addPart('self')}>Добавить деталь</button>
+                  </div>
+                </article>
+                <article className="panel panel-wide">
+                  <div className="parts-grid">{state.parts.length ? state.parts.map(renderPartCard) : <EmptyState title="Карточек деталей пока нет" text="Добавьте первую деталь, чтобы сохранить OEM, дату установки и пробег замены." />}</div>
+                </article>
+              </section>
+            ) : null}
 
-            {state.role === 'owner' && activeTab === 'maintenance' ? <section className="grid"><article className="panel"><div className="panel-heading"><div><h2>Ближайший регламент</h2><p className="muted">Здесь собран понятный план обслуживания по пробегу без абстрактных ТО1/ТО2.</p></div><ShieldCheck size={22} /></div><div className="maintenance-summary-grid"><div className="feature"><div><strong>{nearestMaintenance?.title ?? 'Регламент не найден'}</strong><p className="muted">Следующий обязательный шаг</p></div><strong>{nearestMaintenance ? `${remainingMileage(nearestMaintenance, state.vehicle.mileageKm).toLocaleString('ru-RU')} км` : '—'}</strong></div><div className="feature"><div><strong>{state.vehicle.mileageKm.toLocaleString('ru-RU')} км</strong><p className="muted">Текущий пробег</p></div><strong>{state.vehicle.nextInspection || 'Осмотр не указан'}</strong></div><div className="feature"><div><strong>{state.maintenance.length}</strong><p className="muted">Этапов регламента</p></div><strong>{state.parts.length} деталей на контроле</strong></div></div></article><article className="panel panel-wide maintenance-stack">{state.maintenance.length ? [...state.maintenance].sort((left, right) => remainingMileage(left, state.vehicle.mileageKm) - remainingMileage(right, state.vehicle.mileageKm)).map((task) => <article className="maintenance-card" key={task.id}><button className="maintenance-toggle" onClick={() => setExpandedMaintenanceId((current) => current === task.id ? null : task.id)}><div><span className="maintenance-kicker">{task.title}</span><strong>{task.title}</strong><p className="muted">Следующая отметка до {task.dueAtKm.toLocaleString('ru-RU')} км</p></div>{expandedMaintenanceId === task.id ? <ChevronUp size={18} /> : <ChevronDown size={18} />}</button><div className="maintenance-meta-grid"><div><span>Осталось</span><strong>{remainingMileage(task, state.vehicle.mileageKm).toLocaleString('ru-RU')} км</strong></div><div><span>Последний раз</span><strong>{task.lastDoneKm.toLocaleString('ru-RU')} км</strong></div><div><span>Интервал</span><strong>{task.intervalKm.toLocaleString('ru-RU')} км</strong></div></div><div className="progress-track"><div className="progress-bar" style={{ width: `${maintenanceProgress(task, state.vehicle.mileageKm)}%` }} /></div>{expandedMaintenanceId === task.id ? <div className="maintenance-details"><ul className="stack-list">{task.items.map((item) => <li key={item}>{item}</li>)}</ul><p className="muted">{task.notes}</p></div> : null}</article>) : <EmptyState title="Регламент пока не заполнен" text="После первой машины здесь появится карта обслуживания по пробегу." />}</article></section> : null}
+            {state.role === 'owner' && activeTab === 'maintenance' ? (
+              <section className="grid">
+                <article className="panel">
+                  <div className="panel-heading">
+                    <div>
+                      <h2>Ближайший регламент</h2>
+                      <p className="muted">С понятными цветами, запасом по пробегу и ручной корректировкой последней замены.</p>
+                    </div>
+                    <ShieldCheck size={22} />
+                  </div>
+                  <div className="maintenance-summary-grid">
+                    <div className={`feature maintenance-summary-card ${nearestMaintenance ? maintenanceUrgency(nearestMaintenance, state.vehicle.mileageKm) : 'ok'}`}>
+                      <span className="maintenance-summary-label">Следующий шаг</span>
+                      <strong>{nearestMaintenance?.title ?? 'Регламент не найден'}</strong>
+                      <p className="muted">{nearestMaintenance ? maintenanceUrgencyLabel(nearestMaintenance, state.vehicle.mileageKm) : 'Добавьте автомобиль'}</p>
+                      <strong>{nearestMaintenance ? `${remainingMileage(nearestMaintenance, state.vehicle.mileageKm).toLocaleString('ru-RU')} км` : '—'}</strong>
+                    </div>
+                    <div className="feature maintenance-summary-card neutral">
+                      <span className="maintenance-summary-label">Автомобиль</span>
+                      <strong>{state.vehicle.mileageKm.toLocaleString('ru-RU')} км</strong>
+                      <p className="muted">Текущий пробег</p>
+                      <strong>{state.vehicle.nextInspection || 'Осмотр не указан'}</strong>
+                    </div>
+                    <div className="feature maintenance-summary-card neutral">
+                      <span className="maintenance-summary-label">Под контролем</span>
+                      <strong>{state.maintenance.length}</strong>
+                      <p className="muted">Этапов регламента</p>
+                      <strong>{state.parts.length} деталей</strong>
+                    </div>
+                  </div>
+                </article>
+                <article className="panel panel-wide maintenance-stack">
+                  {state.maintenance.length ? [...state.maintenance]
+                    .sort((left, right) => remainingMileage(left, state.vehicle.mileageKm) - remainingMileage(right, state.vehicle.mileageKm))
+                    .map((task) => {
+                      const urgency = maintenanceUrgency(task, state.vehicle.mileageKm);
+                      const isExpanded = expandedMaintenanceId === task.id;
+                      const isEditing = editingMaintenanceId === task.id;
+                      return (
+                        <article className={`maintenance-card ${urgency}`} key={task.id}>
+                          <button className="maintenance-toggle" onClick={() => setExpandedMaintenanceId((current) => current === task.id ? null : task.id)}>
+                            <div className="maintenance-heading-block">
+                              <div className="maintenance-title-row">
+                                <strong>{task.title}</strong>
+                                <span className={`source-badge ${urgency === 'danger' ? 'self' : urgency === 'warning' ? 'warning' : 'service'}`}>{maintenanceUrgencyLabel(task, state.vehicle.mileageKm)}</span>
+                              </div>
+                              <p className="muted">Следующая отметка до {task.dueAtKm.toLocaleString('ru-RU')} км</p>
+                            </div>
+                            {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                          </button>
+                          <div className="maintenance-meta-grid">
+                            <div><span>Осталось</span><strong>{remainingMileage(task, state.vehicle.mileageKm).toLocaleString('ru-RU')} км</strong></div>
+                            <div><span>Последний раз</span><strong>{task.lastDoneKm.toLocaleString('ru-RU')} км</strong></div>
+                            <div><span>Интервал</span><strong>{task.intervalKm.toLocaleString('ru-RU')} км</strong></div>
+                          </div>
+                          <div className="progress-track maintenance-progress-track">
+                            <div className={`progress-bar ${urgency}`} style={{ width: `${maintenanceProgress(task, state.vehicle.mileageKm)}%` }} />
+                          </div>
+                          {isExpanded ? (
+                            <div className="maintenance-details">
+                              <div className="maintenance-actions-row">
+                                <button className="ghost-button compact" onClick={() => beginEditMaintenance(task)}><Pencil size={14} />Отметить замену</button>
+                              </div>
+                              {isEditing ? (
+                                <div className="maintenance-edit-card">
+                                  <div className="field-row">
+                                    <input value={maintenanceEditDraft.lastDoneKm} onChange={(event) => setMaintenanceEditDraft({ lastDoneKm: event.target.value })} placeholder={`Не больше ${state.vehicle.mileageKm.toLocaleString('ru-RU')} км`} />
+                                  </div>
+                                  <div className="maintenance-edit-actions">
+                                    <button className="primary-button compact" onClick={() => saveMaintenanceEdit(task.id)}><Save size={14} />Сохранить</button>
+                                    <button className="ghost-button compact" onClick={cancelEditMaintenance}><X size={14} />Отмена</button>
+                                  </div>
+                                  <p className="muted">Укажите реальный пробег последней замены. Он не может быть больше текущего пробега авто.</p>
+                                </div>
+                              ) : null}
+                              <ul className="stack-list">{task.items.map((item) => <li key={item}>{item}</li>)}</ul>
+                              <p className="muted">{task.notes}</p>
+                            </div>
+                          ) : null}
+                        </article>
+                      );
+                    }) : <EmptyState title="Регламент пока не заполнен" text="После первой машины здесь появится карта обслуживания по пробегу." />}
+                </article>
+              </section>
+            ) : null}
 
             {state.role === 'owner' && activeTab === 'history' ? <section className="grid"><article className="panel"><div className="panel-heading"><div><h2>Сервисная сводка</h2><p className="muted">Только визиты в сервис и подтвержденные работы без личных заметок.</p></div><Wrench size={22} /></div><div className="service-summary-grid"><div className="feature"><div><strong>{verifiedRecords.length}</strong><p className="muted">Подтвержденных работ</p></div></div><div className="feature"><div><strong>{latestVerifiedRecord?.date ?? '—'}</strong><p className="muted">Последний визит</p></div></div><div className="feature"><div><strong>{latestVerifiedRecord?.location ?? 'СТО не указано'}</strong><p className="muted">Последнее место обслуживания</p></div></div></div><div className="owner-overview-actions"><button className="primary-button compact" onClick={exportRecords}><Download size={14} />Экспортировать паспорт</button></div></article><article className="panel panel-wide"><div className="panel-heading"><div><h2>История работ СТО</h2><p className="muted">Каждая запись показывает дату, сервис, исполнителя и итог работ.</p></div><BadgeCheck size={22} /></div><div className="service-history-stack">{state.records.length ? state.records.map(renderServiceCard) : <EmptyState title="История обслуживания пуста" text="Когда вы или сервис добавите первую работу, она появится здесь." />}</div></article></section> : null}
 

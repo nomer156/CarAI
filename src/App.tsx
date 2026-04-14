@@ -66,8 +66,11 @@ type TabKey = 'overview' | 'parts' | 'maintenance' | 'history';
 type ThemeMode = 'light' | 'dark';
 type StaffRoleOption = 'mechanic' | 'staff' | 'service_admin';
 type PartDraft = {
+  assembly: string;
+  subAssembly: string;
   name: string;
   oem: string;
+  analogs: string;
   manufacturer: string;
   price: string;
   note: string;
@@ -245,8 +248,11 @@ function emptyQuickEntryDraft(): QuickEntryDraft {
 
 function emptyPartDraft(defaultMileage?: number): PartDraft {
   return {
+    assembly: '',
+    subAssembly: '',
     name: '',
     oem: '',
+    analogs: '',
     manufacturer: '',
     price: '',
     note: '',
@@ -431,8 +437,6 @@ function App() {
   const [serviceCenterCity, setServiceCenterCity] = useState('');
   const [serviceCenterBays, setServiceCenterBays] = useState('');
   const [ownerPartDraft, setOwnerPartDraft] = useState<PartDraft>(emptyPartDraft());
-  const [ownerPartAssembly, setOwnerPartAssembly] = useState('');
-  const [ownerPartSubAssembly, setOwnerPartSubAssembly] = useState('');
   const [ownerPartCatalogId, setOwnerPartCatalogId] = useState<string | undefined>();
   const [servicePartDraft, setServicePartDraft] = useState<PartDraft>(emptyPartDraft());
   const [editingPartId, setEditingPartId] = useState<string | null>(null);
@@ -622,15 +626,37 @@ function App() {
   const selectedQuickEntryItem = useMemo(() => findQuickEntryCatalogItem(quickEntryDraft), [quickEntryDraft]);
   const quickEntrySuggestions = useMemo(() => suggestServiceCatalogItems(quickEntryDraft.partName, quickEntryDraft.assembly, quickEntryDraft.subAssembly)
     .filter((item) => consumableCatalogIds.has(item.id)), [quickEntryDraft.partName, quickEntryDraft.assembly, quickEntryDraft.subAssembly]);
-  const ownerPartSubAssemblyOptions = useMemo(() => getServiceSubAssemblies(ownerPartAssembly), [ownerPartAssembly]);
+  const ownerPartSubAssemblyOptions = useMemo(() => getServiceSubAssemblies(ownerPartDraft.assembly), [ownerPartDraft.assembly]);
   const ownerPartSuggestions = useMemo(
-    () => suggestServiceCatalogItems(ownerPartDraft.name, ownerPartAssembly, ownerPartSubAssembly),
-    [ownerPartDraft.name, ownerPartAssembly, ownerPartSubAssembly],
+    () => suggestServiceCatalogItems(ownerPartDraft.name, ownerPartDraft.assembly, ownerPartDraft.subAssembly),
+    [ownerPartDraft.name, ownerPartDraft.assembly, ownerPartDraft.subAssembly],
   );
   const selectedOwnerPartItem = useMemo(
-    () => getServiceCatalogItem(ownerPartCatalogId) ?? findServiceCatalogItem(ownerPartDraft.name, ownerPartAssembly, ownerPartSubAssembly),
-    [ownerPartCatalogId, ownerPartDraft.name, ownerPartAssembly, ownerPartSubAssembly],
+    () => getServiceCatalogItem(ownerPartCatalogId) ?? findServiceCatalogItem(ownerPartDraft.name, ownerPartDraft.assembly, ownerPartDraft.subAssembly),
+    [ownerPartCatalogId, ownerPartDraft.name, ownerPartDraft.assembly, ownerPartDraft.subAssembly],
   );
+  const currentInstalledParts = useMemo(() => {
+    const rankedParts = [...state.parts].sort((left, right) => {
+      const leftMileage = left.installedMileageKm ?? -1;
+      const rightMileage = right.installedMileageKm ?? -1;
+      if (leftMileage !== rightMileage) return rightMileage - leftMileage;
+      const leftDate = left.installedAt ? new Date(left.installedAt).getTime() : 0;
+      const rightDate = right.installedAt ? new Date(right.installedAt).getTime() : 0;
+      return rightDate - leftDate;
+    });
+
+    const grouped = new Map<string, Part>();
+    rankedParts.forEach((part) => {
+      const key = `${part.assembly || 'Без узла'}|${part.subAssembly || 'Без подузла'}`;
+      if (!grouped.has(key)) grouped.set(key, part);
+    });
+
+    return [...grouped.values()].sort((left, right) => {
+      const leftAssembly = `${left.assembly || 'Без узла'} ${left.subAssembly || 'Без подузла'}`;
+      const rightAssembly = `${right.assembly || 'Без узла'} ${right.subAssembly || 'Без подузла'}`;
+      return leftAssembly.localeCompare(rightAssembly, 'ru-RU');
+    });
+  }, [state.parts]);
   const urgentParts = useMemo(() => [...state.parts]
     .filter((part) => part.nextReplacementKm && part.nextReplacementKm <= state.vehicle.mileageKm + 3000)
     .sort((left, right) => (left.nextReplacementKm ?? Number.MAX_SAFE_INTEGER) - (right.nextReplacementKm ?? Number.MAX_SAFE_INTEGER)), [state.parts, state.vehicle.mileageKm]);
@@ -672,8 +698,6 @@ function App() {
     });
     const defaults = resolveVehicleDefaults(brand.brand, brand.models[0], nextDate);
     setOwnerPartDraft(emptyPartDraft(defaults.defaultMileageKm));
-    setOwnerPartAssembly('');
-    setOwnerPartSubAssembly('');
     setOwnerPartCatalogId(undefined);
     setQuickEntryDraft(emptyQuickEntryDraft());
     setIsVehicleEditorOpen(true);
@@ -686,8 +710,6 @@ function App() {
     setState((current) => applyVehiclePresetState(current, brand, nextModel));
     const defaults = resolveVehicleDefaults(brand, nextModel);
     setOwnerPartDraft((current) => emptyPartDraft(current.installedMileageKm ? Number.parseInt(current.installedMileageKm, 10) : defaults.defaultMileageKm));
-    setOwnerPartAssembly('');
-    setOwnerPartSubAssembly('');
     setOwnerPartCatalogId(undefined);
   }
 
@@ -695,8 +717,6 @@ function App() {
     setState((current) => applyVehiclePresetState(current, current.vehicle.brand, model));
     const defaults = resolveVehicleDefaults(state.vehicle.brand, model);
     setOwnerPartDraft((current) => emptyPartDraft(current.installedMileageKm ? Number.parseInt(current.installedMileageKm, 10) : defaults.defaultMileageKm));
-    setOwnerPartAssembly('');
-    setOwnerPartSubAssembly('');
     setOwnerPartCatalogId(undefined);
   }
 
@@ -744,10 +764,13 @@ function App() {
   function selectOwnerPartItem(itemId: string) {
     const item = getServiceCatalogItem(itemId);
     if (!item) return;
-    setOwnerPartAssembly(item.assembly);
-    setOwnerPartSubAssembly(item.subAssembly);
     setOwnerPartCatalogId(item.id);
-    setOwnerPartDraft((current) => ({ ...current, name: item.label }));
+    setOwnerPartDraft((current) => ({
+      ...current,
+      assembly: item.assembly,
+      subAssembly: item.subAssembly,
+      name: item.label,
+    }));
   }
 
   function beginEditMaintenance(task: MaintenanceTask) {
@@ -912,8 +935,11 @@ function App() {
 
     const nextPart: Part = {
       id: `part-${Date.now()}`,
+      assembly: draft.assembly.trim(),
+      subAssembly: draft.subAssembly.trim(),
       name: draft.name.trim(),
       oem: draft.oem.trim(),
+      analogs: draft.analogs.trim(),
       manufacturer: draft.manufacturer.trim() || 'Не указан',
       price: toOptionalNumber(draft.price) ?? 0,
       status: draft.status,
@@ -924,15 +950,18 @@ function App() {
       nextReplacementKm: toOptionalNumber(draft.nextReplacementKm) ?? null,
     };
     const maintenanceTaskId = source === 'self'
-      ? (selectedOwnerPartItem?.maintenanceTaskId ?? resolvePartMaintenanceTaskId(nextPart.name, ownerPartAssembly, ownerPartSubAssembly))
+      ? (selectedOwnerPartItem?.maintenanceTaskId ?? resolvePartMaintenanceTaskId(nextPart.name, nextPart.assembly, nextPart.subAssembly))
       : resolvePartMaintenanceTaskId(nextPart.name);
 
     try {
       if (session && hasCloudProfile) {
         await upsertVehiclePart({
           ownerCode: state.role === 'owner' ? undefined : activeServiceOwnerCode || undefined,
+          assembly: nextPart.assembly,
+          subAssembly: nextPart.subAssembly,
           name: nextPart.name,
           oem: nextPart.oem,
+          analogs: nextPart.analogs,
           manufacturer: nextPart.manufacturer,
           price: nextPart.price,
           status: nextPart.status,
@@ -954,8 +983,6 @@ function App() {
 
       if (source === 'self') {
         setOwnerPartDraft(emptyPartDraft(state.vehicle.mileageKm));
-        setOwnerPartAssembly('');
-        setOwnerPartSubAssembly('');
         setOwnerPartCatalogId(undefined);
       }
       else setServicePartDraft(emptyPartDraft(state.vehicle.mileageKm));
@@ -968,8 +995,11 @@ function App() {
   function startEditingPart(part: Part) {
     setEditingPartId(part.id);
     setEditingPartDraft({
+      assembly: part.assembly,
+      subAssembly: part.subAssembly,
       name: part.name,
       oem: part.oem,
+      analogs: part.analogs,
       manufacturer: part.manufacturer,
       price: String(part.price || ''),
       note: part.note,
@@ -994,8 +1024,11 @@ function App() {
     }
     const updatedPart: Part = {
       id: editingPartId,
+      assembly: editingPartDraft.assembly.trim(),
+      subAssembly: editingPartDraft.subAssembly.trim(),
       name: editingPartDraft.name.trim(),
       oem: editingPartDraft.oem.trim(),
+      analogs: editingPartDraft.analogs.trim(),
       manufacturer: editingPartDraft.manufacturer.trim() || 'Не указан',
       price: toOptionalNumber(editingPartDraft.price) ?? 0,
       status: editingPartDraft.status,
@@ -1005,15 +1038,18 @@ function App() {
       installedMileageKm,
       nextReplacementKm: toOptionalNumber(editingPartDraft.nextReplacementKm) ?? null,
     };
-    const maintenanceTaskId = resolvePartMaintenanceTaskId(updatedPart.name);
+    const maintenanceTaskId = resolvePartMaintenanceTaskId(updatedPart.name, updatedPart.assembly, updatedPart.subAssembly);
 
     try {
       if (session && hasCloudProfile) {
         await upsertVehiclePart({
           ownerCode: state.role === 'owner' ? undefined : activeServiceOwnerCode || undefined,
           partId: updatedPart.id,
+          assembly: updatedPart.assembly,
+          subAssembly: updatedPart.subAssembly,
           name: updatedPart.name,
           oem: updatedPart.oem,
+          analogs: updatedPart.analogs,
           manufacturer: updatedPart.manufacturer,
           price: updatedPart.price,
           status: updatedPart.status,
@@ -1359,8 +1395,11 @@ function App() {
         </div>
         {isEditing ? (
           <div className="cloud-card">
+            <div className="field-row"><input value={editingPartDraft.assembly} onChange={(event) => setEditingPartDraft((current) => ({ ...current, assembly: event.target.value }))} placeholder="Узел" /></div>
+            <div className="field-row"><input value={editingPartDraft.subAssembly} onChange={(event) => setEditingPartDraft((current) => ({ ...current, subAssembly: event.target.value }))} placeholder="Подузел" /></div>
             <div className="field-row"><input value={editingPartDraft.name} onChange={(event) => setEditingPartDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Название" /></div>
             <div className="field-row"><input value={editingPartDraft.oem} onChange={(event) => setEditingPartDraft((current) => ({ ...current, oem: event.target.value }))} placeholder="OEM" /></div>
+            <div className="field-row"><input value={editingPartDraft.analogs} onChange={(event) => setEditingPartDraft((current) => ({ ...current, analogs: event.target.value }))} placeholder="Аналоги" /></div>
             <div className="field-row"><input value={editingPartDraft.manufacturer} onChange={(event) => setEditingPartDraft((current) => ({ ...current, manufacturer: event.target.value }))} placeholder="Производитель" /></div>
             <div className="field-row"><input value={editingPartDraft.price} onChange={(event) => setEditingPartDraft((current) => ({ ...current, price: event.target.value }))} placeholder="Цена" /></div>
             <div className="field-row"><input type="date" value={editingPartDraft.installedAt} onChange={(event) => setEditingPartDraft((current) => ({ ...current, installedAt: event.target.value }))} /></div>
@@ -1375,8 +1414,14 @@ function App() {
           </div>
         ) : (
           <>
+            <div className="journal-meta">
+              {part.assembly ? <span className="source-badge neutral">{part.assembly}</span> : null}
+              {part.subAssembly ? <span className="source-badge neutral">{part.subAssembly}</span> : null}
+            </div>
             <div className="part-meta-grid">
               <div><span>OEM</span><strong>{part.oem}</strong></div>
+              <div><span>Аналоги</span><strong>{part.analogs || 'Не указаны'}</strong></div>
+              <div><span>Бренд</span><strong>{part.manufacturer}</strong></div>
               <div><span>Цена</span><strong>{formatMoney(part.price)}</strong></div>
               <div><span>Установлено</span><strong>{formatLongDate(part.installedAt)}</strong></div>
               <div><span>Пробег установки</span><strong>{part.installedMileageKm ? `${part.installedMileageKm.toLocaleString('ru-RU')} км` : 'Не указан'}</strong></div>
@@ -1757,7 +1802,7 @@ function App() {
                   <div className="panel-heading">
                     <div>
                       <h2>Добавить деталь</h2>
-                      <p className="muted">Подберите узел и деталь через каталог, затем сохраните OEM, установку и комментарии по ресурсу.</p>
+                      <p className="muted">Подберите узел и деталь через каталог, затем сохраните OEM, аналоги, бренд и ресурс.</p>
                     </div>
                     <Plus size={20} />
                   </div>
@@ -1765,12 +1810,10 @@ function App() {
                     <div className="quick-entry-catalog-grid">
                       <div className="field-row">
                         <select
-                          value={ownerPartAssembly}
+                          value={ownerPartDraft.assembly}
                           onChange={(event) => {
-                            setOwnerPartAssembly(event.target.value);
-                            setOwnerPartSubAssembly('');
                             setOwnerPartCatalogId(undefined);
-                            setOwnerPartDraft((current) => ({ ...current, name: '' }));
+                            setOwnerPartDraft((current) => ({ ...current, assembly: event.target.value, subAssembly: '', name: '' }));
                           }}
                         >
                           <option value="">Выберите узел</option>
@@ -1779,15 +1822,14 @@ function App() {
                       </div>
                       <div className="field-row">
                         <select
-                          value={ownerPartSubAssembly}
+                          value={ownerPartDraft.subAssembly}
                           onChange={(event) => {
-                            setOwnerPartSubAssembly(event.target.value);
                             setOwnerPartCatalogId(undefined);
-                            setOwnerPartDraft((current) => ({ ...current, name: '' }));
+                            setOwnerPartDraft((current) => ({ ...current, subAssembly: event.target.value, name: '' }));
                           }}
-                          disabled={!ownerPartAssembly}
+                          disabled={!ownerPartDraft.assembly}
                         >
-                          <option value="">{ownerPartAssembly ? 'Выберите подузел' : 'Сначала выберите узел'}</option>
+                          <option value="">{ownerPartDraft.assembly ? 'Выберите подузел' : 'Сначала выберите узел'}</option>
                           {ownerPartSubAssemblyOptions.map((subAssembly) => <option key={subAssembly} value={subAssembly}>{subAssembly}</option>)}
                         </select>
                       </div>
@@ -1803,7 +1845,7 @@ function App() {
                           placeholder="Начните вводить: сцепление, шрус, амортизатор, рычаг..."
                         />
                       </div>
-                      {(ownerPartDraft.name.trim().length >= 1 || (ownerPartAssembly && ownerPartSubAssembly)) && ownerPartSuggestions.length ? (
+                      {(ownerPartDraft.name.trim().length >= 1 || (ownerPartDraft.assembly && ownerPartDraft.subAssembly)) && ownerPartSuggestions.length ? (
                         <div className="quick-entry-suggestions">
                           {ownerPartSuggestions.map((item) => (
                             <button key={item.id} className="quick-entry-suggestion" onClick={() => selectOwnerPartItem(item.id)}>
@@ -1816,7 +1858,8 @@ function App() {
                     </div>
                     {selectedOwnerPartItem ? <p className="quick-entry-selected muted">Выбрано: {selectedOwnerPartItem.assembly} → {selectedOwnerPartItem.subAssembly} → {selectedOwnerPartItem.label}</p> : null}
                     <div className="field-row"><input value={ownerPartDraft.oem} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, oem: event.target.value }))} placeholder="OEM" /></div>
-                    <div className="field-row"><input value={ownerPartDraft.manufacturer} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, manufacturer: event.target.value }))} placeholder="Производитель" /></div>
+                    <div className="field-row"><input value={ownerPartDraft.analogs} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, analogs: event.target.value }))} placeholder="Аналоги: артикулы через запятую" /></div>
+                    <div className="field-row"><input value={ownerPartDraft.manufacturer} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, manufacturer: event.target.value }))} placeholder="Бренд / производитель" /></div>
                     <div className="field-row"><input value={ownerPartDraft.price} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, price: event.target.value }))} placeholder="Цена" /></div>
                     <div className="field-row"><input type="date" value={ownerPartDraft.installedAt} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, installedAt: event.target.value }))} /></div>
                     <div className="field-row"><input value={ownerPartDraft.installedMileageKm} onChange={(event) => setOwnerPartDraft((current) => ({ ...current, installedMileageKm: event.target.value }))} placeholder="Пробег установки" /></div>
@@ -1827,6 +1870,28 @@ function App() {
                   </div>
                 </article>
                 <article className="panel panel-wide">
+                  <div className="panel-heading">
+                    <div>
+                      <h2>Что сейчас стоит на машине</h2>
+                      <p className="muted">Актуальная установленная деталь по каждому узлу на основе последних записей.</p>
+                    </div>
+                    <Check size={20} />
+                  </div>
+                  <div className="current-parts-grid">
+                    {currentInstalledParts.length ? currentInstalledParts.map((part) => (
+                      <article className="current-part-card" key={`current-${part.id}`}>
+                        <span className="source-badge neutral">{part.assembly || 'Без узла'}</span>
+                        <strong>{part.subAssembly || 'Без подузла'}</strong>
+                        <p>{part.name}</p>
+                        <div className="current-part-meta">
+                          <span>OEM: {part.oem}</span>
+                          <span>Аналоги: {part.analogs || '—'}</span>
+                          <span>Бренд: {part.manufacturer}</span>
+                          <span>Установлено: {formatLongDate(part.installedAt)}</span>
+                        </div>
+                      </article>
+                    )) : <EmptyState title="Текущая комплектация пока не собрана" text="Добавьте детали по узлам, и здесь появится краткая карта того, что сейчас стоит на машине." />}
+                  </div>
                   <div className="parts-grid">{state.parts.length ? state.parts.map(renderPartCard) : <EmptyState title="Карточек деталей пока нет" text="Добавьте первую деталь, чтобы сохранить OEM, дату установки и пробег замены." />}</div>
                 </article>
               </section>
@@ -1973,7 +2038,7 @@ function App() {
 
             {state.role === 'mechanic' && activeTab === 'overview' ? <section className="grid"><article className="panel panel-wide"><div className="panel-heading"><div><h2>Смена и задачи</h2><p className="muted">Живая очередь по owner ID и готовые быстрые действия по текущей смене.</p></div><Wrench size={22} /></div><div className="timeline">{state.mechanicTasks.length ? state.mechanicTasks.map((task) => <div className="timeline-item" key={task.id}><div><strong>{task.title}</strong><p>{task.carLabel} • {task.ownerName}</p><p className="muted">{task.bay} • {task.scheduledAt}</p></div><button className="ghost-button compact" onClick={() => setState((current) => ({ ...current, mechanicTasks: current.mechanicTasks.map((item) => item.id === task.id ? { ...item, status: 'done' } : item) }))}>Готово</button></div>) : <EmptyState title="Сегодня задач пока нет" text="Новые работы появятся здесь, как только администратор или вы добавите машину в очередь." />}</div></article></section> : null}
 
-            {state.role === 'mechanic' && activeTab === 'parts' ? <section className="grid"><article className="panel"><div className="panel-heading"><div><h2>Добавить деталь от СТО</h2><p className="muted">Карточка сразу помечается как подтвержденная сервисом.</p></div><Plus size={20} /></div><div className="cloud-card"><div className="field-row"><input value={servicePartDraft.name} onChange={(event) => setServicePartDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Название" /></div><div className="field-row"><input value={servicePartDraft.oem} onChange={(event) => setServicePartDraft((current) => ({ ...current, oem: event.target.value }))} placeholder="OEM" /></div><div className="field-row"><input value={servicePartDraft.manufacturer} onChange={(event) => setServicePartDraft((current) => ({ ...current, manufacturer: event.target.value }))} placeholder="Производитель" /></div><div className="field-row"><input value={servicePartDraft.price} onChange={(event) => setServicePartDraft((current) => ({ ...current, price: event.target.value }))} placeholder="Цена" /></div><div className="field-row"><input type="date" value={servicePartDraft.installedAt} onChange={(event) => setServicePartDraft((current) => ({ ...current, installedAt: event.target.value }))} /></div><div className="field-row"><input value={servicePartDraft.installedMileageKm} onChange={(event) => setServicePartDraft((current) => ({ ...current, installedMileageKm: event.target.value }))} placeholder="Пробег установки" /></div><div className="field-row"><input value={servicePartDraft.nextReplacementKm} onChange={(event) => setServicePartDraft((current) => ({ ...current, nextReplacementKm: event.target.value }))} placeholder="Следующая замена, км" /></div><div className="field-row"><select value={servicePartDraft.status} onChange={(event) => setServicePartDraft((current) => ({ ...current, status: event.target.value as Part['status'] }))}><option value="ok">Норма</option><option value="watch">Контроль</option><option value="replace">Замена</option></select></div><div className="field-row"><input value={servicePartDraft.note} onChange={(event) => setServicePartDraft((current) => ({ ...current, note: event.target.value }))} placeholder="Комментарий механика" /></div><button className="primary-button" onClick={() => addPart('service')}>Добавить деталь</button></div></article><article className="panel panel-wide"><div className="parts-grid">{state.parts.length ? state.parts.map(renderPartCard) : <EmptyState title="Деталей пока нет" text="Выберите авто владельца и добавьте первую установленную деталь." />}</div></article></section> : null}
+            {state.role === 'mechanic' && activeTab === 'parts' ? <section className="grid"><article className="panel"><div className="panel-heading"><div><h2>Добавить деталь от СТО</h2><p className="muted">Карточка сразу помечается как подтвержденная сервисом.</p></div><Plus size={20} /></div><div className="cloud-card"><div className="field-row"><input value={servicePartDraft.assembly} onChange={(event) => setServicePartDraft((current) => ({ ...current, assembly: event.target.value }))} placeholder="Узел" /></div><div className="field-row"><input value={servicePartDraft.subAssembly} onChange={(event) => setServicePartDraft((current) => ({ ...current, subAssembly: event.target.value }))} placeholder="Подузел" /></div><div className="field-row"><input value={servicePartDraft.name} onChange={(event) => setServicePartDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Название" /></div><div className="field-row"><input value={servicePartDraft.oem} onChange={(event) => setServicePartDraft((current) => ({ ...current, oem: event.target.value }))} placeholder="OEM" /></div><div className="field-row"><input value={servicePartDraft.analogs} onChange={(event) => setServicePartDraft((current) => ({ ...current, analogs: event.target.value }))} placeholder="Аналоги" /></div><div className="field-row"><input value={servicePartDraft.manufacturer} onChange={(event) => setServicePartDraft((current) => ({ ...current, manufacturer: event.target.value }))} placeholder="Производитель" /></div><div className="field-row"><input value={servicePartDraft.price} onChange={(event) => setServicePartDraft((current) => ({ ...current, price: event.target.value }))} placeholder="Цена" /></div><div className="field-row"><input type="date" value={servicePartDraft.installedAt} onChange={(event) => setServicePartDraft((current) => ({ ...current, installedAt: event.target.value }))} /></div><div className="field-row"><input value={servicePartDraft.installedMileageKm} onChange={(event) => setServicePartDraft((current) => ({ ...current, installedMileageKm: event.target.value }))} placeholder="Пробег установки" /></div><div className="field-row"><input value={servicePartDraft.nextReplacementKm} onChange={(event) => setServicePartDraft((current) => ({ ...current, nextReplacementKm: event.target.value }))} placeholder="Следующая замена, км" /></div><div className="field-row"><select value={servicePartDraft.status} onChange={(event) => setServicePartDraft((current) => ({ ...current, status: event.target.value as Part['status'] }))}><option value="ok">Норма</option><option value="watch">Контроль</option><option value="replace">Замена</option></select></div><div className="field-row"><input value={servicePartDraft.note} onChange={(event) => setServicePartDraft((current) => ({ ...current, note: event.target.value }))} placeholder="Комментарий механика" /></div><button className="primary-button" onClick={() => addPart('service')}>Добавить деталь</button></div></article><article className="panel panel-wide"><div className="parts-grid">{state.parts.length ? state.parts.map(renderPartCard) : <EmptyState title="Деталей пока нет" text="Выберите авто владельца и добавьте первую установленную деталь." />}</div></article></section> : null}
 
             {state.role === 'mechanic' && activeTab === 'maintenance' ? <section className="grid"><article className="panel"><div className="panel-heading"><div><h2>Добавить по owner ID</h2><p className="muted">Можно ввести ID вручную или считать QR с карточки владельца.</p></div><ScanLine size={22} /></div><div className="cloud-card"><div className="field-row"><input value={clientLookupCode} onChange={(event) => setClientLookupCode(event.target.value)} placeholder="UUID владельца" /></div><div className="hero-actions"><button className="ghost-button" onClick={scanOwnerQr} disabled={isScanningQr}>{isScanningQr ? 'Сканируем...' : 'Считать QR'}</button><button className="primary-button" onClick={addClientByOwnerCode}>Добавить в очередь</button></div>{activeServiceOwnerCode ? <span className="source-badge service">Выбрано авто: {activeServiceOwnerCode}</span> : null}</div></article><article className="panel panel-wide"><div className="timeline">{state.serviceQueue.length ? state.serviceQueue.map((item) => <div className="timeline-item" key={item.id}><div><strong>{item.workType}</strong><p>{item.customer} • {item.carLabel}</p><p className="muted">{item.scheduledAt}</p></div><div className="admin-badges"><span className={`source-badge ${item.status === 'ready' ? 'service' : item.status === 'in_service' ? 'warning' : 'neutral'}`}>{queueStatusLabel(item.status)}</span><span className="source-badge neutral">{item.ownerCode}</span><button className="ghost-button compact" onClick={() => setActiveServiceOwnerCode(item.ownerCode)}>Выбрать авто</button><button className="ghost-button compact" onClick={() => setQueueStatus(item.id, 'confirmed')}>Подтвердить</button><button className="ghost-button compact" onClick={() => setQueueStatus(item.id, 'in_service')}>В работу</button><button className="ghost-button compact" onClick={() => setQueueStatus(item.id, 'ready')}>Готово</button></div></div>) : <EmptyState title="Очередь пока пустая" text="Добавьте владельца по ID, и запись сразу появится в рабочем списке." />}</div></article></section> : null}
 

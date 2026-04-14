@@ -85,8 +85,11 @@ create table public.vehicle_access (
 create table public.parts (
   id uuid primary key default gen_random_uuid(),
   vehicle_id uuid not null references public.vehicles(id) on delete cascade,
+  assembly text,
+  sub_assembly text,
   name text not null,
   oem text not null,
+  analogs text,
   manufacturer text,
   price numeric(10, 2),
   status text not null check (status in ('ok', 'watch', 'replace')),

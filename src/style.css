@@ -739,6 +739,33 @@ h2 {
   justify-items: center;
 }
 
+.current-parts-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.current-part-card {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(95, 167, 216, 0.08), transparent), var(--panel-strong);
+}
+
+.current-part-card p {
+  margin: 0;
+}
+
+.current-part-meta {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
 .part-card,
 .maintenance-card {
   width: 100%;
@@ -1481,6 +1508,7 @@ h2 {
   .grid,
   .settings-grid,
   .parts-grid,
+  .current-parts-grid,
   .passport-share,
   .part-meta-grid,
   .quick-entry-catalog-grid,

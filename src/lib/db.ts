@@ -46,6 +46,9 @@ function normalizeGarageState(state: GarageState | undefined): GarageState {
     })),
     parts: (state.parts ?? demoState.parts).map((part) => ({
       ...part,
+      assembly: part.assembly ?? '',
+      subAssembly: part.subAssembly ?? '',
+      analogs: part.analogs ?? '',
       installedAt: part.installedAt ?? null,
       installedMileageKm: part.installedMileageKm ?? null,
       nextReplacementKm: part.nextReplacementKm ?? null,

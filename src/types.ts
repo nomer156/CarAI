@@ -39,8 +39,11 @@ export type JournalRecord = {
 
 export type Part = {
   id: string;
+  assembly: string;
+  subAssembly: string;
   name: string;
   oem: string;
+  analogs: string;
   manufacturer: string;
   price: number;
   status: 'ok' | 'watch' | 'replace';

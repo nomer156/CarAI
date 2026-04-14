@@ -32,8 +32,11 @@ type CloudVehicleRow = {
 
 type CloudPartRow = {
   id: string;
+  assembly: string | null;
+  sub_assembly: string | null;
   name: string;
   oem: string;
+  analogs: string | null;
   manufacturer: string | null;
   price: number | null;
   status: 'ok' | 'watch' | 'replace';
@@ -272,8 +275,11 @@ export function subscribeToAuthChanges(callback: (session: Session | null) => vo
 function mapParts(rows: CloudPartRow[]): Part[] {
   return rows.map((row) => ({
     id: row.id,
+    assembly: row.assembly ?? '',
+    subAssembly: row.sub_assembly ?? '',
     name: row.name,
     oem: row.oem,
+    analogs: row.analogs ?? '',
     manufacturer: row.manufacturer ?? 'Не указан',
     price: row.price ?? 0,
     status: row.status,
@@ -495,7 +501,7 @@ export async function loadGarageStateFromCloud() {
     documentsResult,
     offersResult,
   ] = await Promise.all([
-    supabase.from('parts').select('id, name, oem, manufacturer, price, status, note, installation_source, installed_at, installed_mileage_km, next_replacement_km').eq('vehicle_id', vehicle.id),
+    supabase.from('parts').select('id, assembly, sub_assembly, name, oem, analogs, manufacturer, price, status, note, installation_source, installed_at, installed_mileage_km, next_replacement_km').eq('vehicle_id', vehicle.id),
     supabase
       .from('maintenance_tasks')
       .select('id, title, due_at_km, last_done_km, interval_km, priority, notes')
@@ -688,8 +694,11 @@ export async function deleteCloudAccountData() {
 export async function upsertVehiclePart(input: {
   ownerCode?: string;
   partId?: string | null;
+  assembly?: string;
+  subAssembly?: string;
   name: string;
   oem: string;
+  analogs?: string;
   manufacturer: string;
   price: number;
   status: 'ok' | 'watch' | 'replace';
@@ -706,8 +715,11 @@ export async function upsertVehiclePart(input: {
   const { data, error } = await supabase.rpc('upsert_vehicle_part', {
     target_owner_code: input.ownerCode ?? null,
     target_part_id: input.partId ?? null,
+    part_assembly: input.assembly ?? null,
+    part_sub_assembly: input.subAssembly ?? null,
     part_name: input.name,
     part_oem: input.oem,
+    part_analogs: input.analogs ?? null,
     part_manufacturer: input.manufacturer,
     part_price: input.price,
     part_status: input.status,

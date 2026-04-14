@@ -32,7 +32,11 @@ function normalizeGarageState(state: GarageState | undefined): GarageState {
     ...state,
     cars: state.cars?.length ? state.cars : demoState.cars,
     activeCarId: state.activeCarId ?? state.cars?.[0]?.id ?? demoState.activeCarId,
-    journal: state.journal ?? demoState.journal,
+    journal: (state.journal ?? demoState.journal).map((record) => ({
+      ...record,
+      assembly: record.assembly ?? undefined,
+      subAssembly: record.subAssembly ?? undefined,
+    })),
     parts: (state.parts ?? demoState.parts).map((part) => ({
       ...part,
       installedAt: part.installedAt ?? null,

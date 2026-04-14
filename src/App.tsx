@@ -29,6 +29,14 @@ import {
 import { availableCarColors, resolveCarVisual, vehicleBrandOptions } from './data/carCatalog';
 import { demoState } from './data/demoData';
 import {
+  findServiceCatalogItem,
+  getServiceAssemblies,
+  getServiceCatalogItem,
+  getServiceSubAssemblies,
+  suggestServiceCatalogItems,
+} from './data/serviceCatalog';
+import { buildMaintenanceTemplateForVehicle, resolveVehicleDefaults } from './data/vehiclePresets';
+import {
   addServiceRecordByOwnerCode,
   addVehicleToServiceIntake,
   bootstrapDemoGarage,
@@ -66,7 +74,10 @@ type QuickEntryDraft = {
   note: string;
   occurredAt: string;
   mileage: string;
+  assembly: string;
+  subAssembly: string;
   partName: string;
+  catalogItemId?: string;
   cost: string;
   nextMileage: string;
   rating?: 'good' | 'bad';
@@ -74,8 +85,7 @@ type QuickEntryDraft = {
 type QuickEntryPreset = {
   id: string;
   label: string;
-  note: string;
-  partName: string;
+  catalogItemId: string;
   hint: string;
 };
 
@@ -86,32 +96,46 @@ const companyAdminTabs = ['overview', 'maintenance', 'history'] as const;
 const APP_VERSION = 'v0.2';
 const quickEntryPresets: QuickEntryPreset[] = [
   {
-    id: 'oil',
-    label: 'Масло',
-    note: 'Заменил масло и фильтр',
-    partName: 'Масло двигателя',
+    id: 'engine-oil',
+    label: 'Масло двигателя',
+    catalogItemId: 'engine-oil',
     hint: 'Подходит для быстрой записи масла, фильтра и следующего рубежа по пробегу.',
   },
   {
-    id: 'brakes',
+    id: 'gearbox-oil-auto',
+    label: 'Масло коробки',
+    catalogItemId: 'gearbox-oil-auto',
+    hint: 'Быстрый шаблон для масла АКПП. При необходимости вручную переключите узел на МКПП.',
+  },
+  {
+    id: 'front-pads',
     label: 'Колодки',
-    note: 'Поставил тормозные колодки',
-    partName: 'Тормозные колодки',
+    catalogItemId: 'front-pads',
     hint: 'Удобно сохранить бренд, пробег установки и комментарий вроде "не подошли" или "быстро стерлись".',
   },
   {
-    id: 'timing',
+    id: 'timing-kit',
     label: 'ГРМ',
-    note: 'Проверил или заменил комплект ГРМ',
-    partName: 'Комплект ГРМ',
+    catalogItemId: 'timing-kit',
     hint: 'Для ГРМ лучше сразу указать дату, пробег установки и следующий ориентир по замене.',
   },
   {
-    id: 'filters',
+    id: 'cabin-filter',
     label: 'Фильтры',
-    note: 'Заменил салонный и воздушный фильтры',
-    partName: 'Комплект фильтров',
+    catalogItemId: 'cabin-filter',
     hint: 'Хороший шаблон для сезонного обслуживания и мелких расходников без лишних тапов.',
+  },
+  {
+    id: 'clutch-kit',
+    label: 'Сцепление',
+    catalogItemId: 'clutch-kit',
+    hint: 'Для механики удобно сразу записывать комплект сцепления, выжимной и пробег установки.',
+  },
+  {
+    id: 'front-shock',
+    label: 'Подвеска',
+    catalogItemId: 'front-shock',
+    hint: 'Шаблон для амортизаторов, рычагов и стоек стабилизатора с ручным комментарием по поведению машины.',
   },
 ];
 
@@ -159,15 +183,13 @@ function remainingMileage(task: MaintenanceTask, mileageKm: number) {
   return Math.max(task.dueAtKm - mileageKm, 0);
 }
 
-function resetMaintenanceTasks(tasks: MaintenanceTask[]) {
-  return tasks.map((task) => ({ ...task, lastDoneKm: 0, dueAtKm: task.intervalKm }));
-}
-
 function emptyQuickEntryDraft(): QuickEntryDraft {
   return {
     note: '',
     occurredAt: todayInputValue(),
     mileage: '',
+    assembly: '',
+    subAssembly: '',
     partName: '',
     cost: '',
     nextMileage: '',
@@ -228,15 +250,72 @@ function buildLocalCar(current: GarageState) {
   };
 }
 
-function updateMaintenanceTasks(tasks: MaintenanceTask[], mileageKm: number, occurredAt: string, subject: string) {
-  const match = maintenanceMatchers.find((item) => item.patterns.some((pattern) => pattern.test(subject)));
-  if (!match) return tasks;
-  return tasks.map((task) => (task.id === match.id ? {
+function updateMaintenanceTasks(tasks: MaintenanceTask[], mileageKm: number, occurredAt: string, subject: string, matchedTaskId?: string) {
+  const matchId = matchedTaskId ?? maintenanceMatchers.find((item) => item.patterns.some((pattern) => pattern.test(subject)))?.id;
+  if (!matchId) return tasks;
+  return tasks.map((task) => (task.id === matchId ? {
     ...task,
     lastDoneKm: mileageKm,
     dueAtKm: mileageKm + task.intervalKm,
     notes: `Последняя отметка: ${formatLongDate(occurredAt)} • ${subject}.`,
   } : task));
+}
+
+function composeQuickEntryNote(draft: QuickEntryDraft, fallbackPartName?: string) {
+  const manualNote = draft.note.trim();
+  if (manualNote) return manualNote;
+  const partName = fallbackPartName ?? draft.partName.trim();
+  if (partName) return `Обслуживание: ${partName}`;
+  return '';
+}
+
+function buildQuickEntryPath(draft: QuickEntryDraft, fallbackAssembly?: string, fallbackSubAssembly?: string) {
+  return {
+    assembly: fallbackAssembly ?? (draft.assembly.trim() || undefined),
+    subAssembly: fallbackSubAssembly ?? (draft.subAssembly.trim() || undefined),
+  };
+}
+
+function applyVehiclePresetState(current: GarageState, brand: string, model: string, referenceDate = todayInputValue()) {
+  const defaults = resolveVehicleDefaults(brand, model, referenceDate);
+  const nextMileage = current.vehicle.mileageKm > 0 ? current.vehicle.mileageKm : defaults.defaultMileageKm;
+  const nextMaintenance = buildMaintenanceTemplateForVehicle(brand, model, nextMileage, referenceDate);
+  const nextCarName = `${brand} ${model}`.trim();
+
+  return {
+    ...current,
+    cars: current.cars.length
+      ? current.cars.map((car) => car.id === current.activeCarId ? { ...car, brand, model, name: nextCarName } : car)
+      : current.cars,
+    vehicle: {
+      ...current.vehicle,
+      brand,
+      model,
+      mileageKm: nextMileage,
+      engine: defaults.engine,
+      nextInspection: current.vehicle.nextInspection || defaults.nextInspection,
+    },
+    maintenance: nextMaintenance,
+  };
+}
+
+function hydrateMaintenancePlan(tasks: MaintenanceTask[], brand: string, model: string, mileageKm: number) {
+  const basePlan = buildMaintenanceTemplateForVehicle(brand, model, mileageKm);
+  if (!tasks.length) return basePlan;
+  return basePlan.map((baseTask) => {
+    const currentTask = tasks.find((task) => task.id === baseTask.id);
+    return currentTask ? {
+      ...baseTask,
+      ...currentTask,
+      items: baseTask.items,
+      notes: currentTask.notes || baseTask.notes,
+    } : baseTask;
+  });
+}
+
+function findQuickEntryCatalogItem(draft: QuickEntryDraft) {
+  return getServiceCatalogItem(draft.catalogItemId)
+    ?? findServiceCatalogItem(draft.partName, draft.assembly, draft.subAssembly);
 }
 
 function EmptyState({ title, text }: { title: string; text: string }) {
@@ -296,7 +375,18 @@ function App() {
   const passportRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
-    loadGarageState().then(setState).catch(() => setState(demoState));
+    loadGarageState().then((loadedState) => {
+      if (loadedState.role === 'owner' && loadedState.vehicle.brand && loadedState.vehicle.model) {
+        const mileageKm = loadedState.vehicle.mileageKm || resolveVehicleDefaults(loadedState.vehicle.brand, loadedState.vehicle.model).defaultMileageKm;
+        setState({
+          ...loadedState,
+          vehicle: { ...loadedState.vehicle, mileageKm },
+          maintenance: hydrateMaintenancePlan(loadedState.maintenance, loadedState.vehicle.brand, loadedState.vehicle.model, mileageKm),
+        });
+        return;
+      }
+      setState(loadedState);
+    }).catch(() => setState(demoState));
   }, []);
 
   useEffect(() => {
@@ -352,7 +442,7 @@ function App() {
 
       const cloudState = await loadGarageStateFromCloud();
       if (cloudState) {
-        setState((current) => ({ ...cloudState, journal: current.journal }));
+        setState((current) => mergeLocalOwnerState(current, cloudState));
         setHasCloudProfile(true);
         setSyncStatus('Профиль и автомобиль загружены из облака.');
       } else {
@@ -377,7 +467,7 @@ function App() {
       setIsAuthReady(true);
       void loadGarageStateFromCloud().then((cloudState) => {
         if (cloudState) {
-          setState((current) => ({ ...cloudState, journal: current.journal }));
+          setState((current) => mergeLocalOwnerState(current, cloudState));
           setHasCloudProfile(true);
         } else {
           setHasCloudProfile(false);
@@ -436,6 +526,14 @@ function App() {
   const brakeTask = state.maintenance.find((task) => task.id === 'brake-service');
   const timingTask = state.maintenance.find((task) => task.id === 'timing-service');
   const activeQuickPreset = quickEntryPresets.find((preset) => preset.id === activeQuickHintId) ?? null;
+  const activeQuickPresetItem = getServiceCatalogItem(activeQuickPreset?.catalogItemId);
+  const assemblyOptions = useMemo(() => getServiceAssemblies(), []);
+  const subAssemblyOptions = useMemo(() => getServiceSubAssemblies(quickEntryDraft.assembly), [quickEntryDraft.assembly]);
+  const selectedQuickEntryItem = useMemo(() => findQuickEntryCatalogItem(quickEntryDraft), [quickEntryDraft]);
+  const quickEntrySuggestions = useMemo(
+    () => suggestServiceCatalogItems(quickEntryDraft.partName, quickEntryDraft.assembly, quickEntryDraft.subAssembly),
+    [quickEntryDraft.partName, quickEntryDraft.assembly, quickEntryDraft.subAssembly],
+  );
   const urgentParts = useMemo(() => [...state.parts]
     .filter((part) => part.nextReplacementKm && part.nextReplacementKm <= state.vehicle.mileageKm + 3000)
     .sort((left, right) => (left.nextReplacementKm ?? Number.MAX_SAFE_INTEGER) - (right.nextReplacementKm ?? Number.MAX_SAFE_INTEGER)), [state.parts, state.vehicle.mileageKm]);
@@ -445,7 +543,14 @@ function App() {
   }
 
   function mergeLocalOwnerState(current: GarageState, cloudState: GarageState) {
-    return { ...cloudState, journal: current.journal };
+    if (cloudState.role !== 'owner') return { ...cloudState, journal: current.journal };
+    const mileageKm = cloudState.vehicle.mileageKm || resolveVehicleDefaults(cloudState.vehicle.brand, cloudState.vehicle.model).defaultMileageKm;
+    return {
+      ...cloudState,
+      journal: current.journal,
+      maintenance: hydrateMaintenancePlan(cloudState.maintenance, cloudState.vehicle.brand, cloudState.vehicle.model, mileageKm),
+      vehicle: { ...cloudState.vehicle, mileageKm },
+    };
   }
 
   function switchRole(role: UserRole) {
@@ -456,28 +561,37 @@ function App() {
   function prepareNewVehicle() {
     const brand = vehicleBrandOptions[0];
     const nextCarId = state.activeCarId || `car-${Date.now()}`;
-    setState((current) => ({
-      ...current,
-      cars: [{ id: nextCarId, name: `${brand.brand} ${brand.models[0]}`, brand: brand.brand, model: brand.models[0] }],
-      activeCarId: nextCarId,
-      vehicle: { ...current.vehicle, brand: brand.brand, model: brand.models[0], vin: '', plate: '', mileageKm: 0, engine: '', nextInspection: '' },
-      journal: [],
-      parts: [],
-      maintenance: resetMaintenanceTasks(current.maintenance),
-    }));
-    setOwnerPartDraft(emptyPartDraft());
+    const nextDate = todayInputValue();
+    setState((current) => {
+      const baseState: GarageState = {
+        ...current,
+        cars: [{ id: nextCarId, name: `${brand.brand} ${brand.models[0]}`, brand: brand.brand, model: brand.models[0] }],
+        activeCarId: nextCarId,
+        vehicle: { ...current.vehicle, brand: brand.brand, model: brand.models[0], vin: '', plate: '', mileageKm: 0, engine: '', nextInspection: '' },
+        journal: [],
+        parts: [],
+      };
+      return applyVehiclePresetState(baseState, brand.brand, brand.models[0], nextDate);
+    });
+    const defaults = resolveVehicleDefaults(brand.brand, brand.models[0], nextDate);
+    setOwnerPartDraft(emptyPartDraft(defaults.defaultMileageKm));
     setQuickEntryDraft(emptyQuickEntryDraft());
     setIsVehicleEditorOpen(true);
-    setSyncStatus('Открыта чистая карточка новой машины.');
+    setSyncStatus('Открыта новая машина с предзаполненным регламентом и средним стартовым пробегом.');
   }
 
   function updateVehicleBrand(brand: string) {
     const option = vehicleBrandOptions.find((item) => item.brand === brand);
-    setState((current) => ({
-      ...current,
-      cars: current.cars.length ? current.cars.map((car) => car.id === current.activeCarId ? { ...car, brand, model: option?.models[0] ?? '', name: `${brand} ${option?.models[0] ?? ''}`.trim() } : car) : current.cars,
-      vehicle: { ...current.vehicle, brand, model: option?.models[0] ?? '' },
-    }));
+    const nextModel = option?.models[0] ?? '';
+    setState((current) => applyVehiclePresetState(current, brand, nextModel));
+    const defaults = resolveVehicleDefaults(brand, nextModel);
+    setOwnerPartDraft((current) => emptyPartDraft(current.installedMileageKm ? Number.parseInt(current.installedMileageKm, 10) : defaults.defaultMileageKm));
+  }
+
+  function updateVehicleModel(model: string) {
+    setState((current) => applyVehiclePresetState(current, current.vehicle.brand, model));
+    const defaults = resolveVehicleDefaults(state.vehicle.brand, model);
+    setOwnerPartDraft((current) => emptyPartDraft(current.installedMileageKm ? Number.parseInt(current.installedMileageKm, 10) : defaults.defaultMileageKm));
   }
 
   function exportRecords() {
@@ -493,12 +607,30 @@ function App() {
   }
 
   function applyTemplateRecord(preset: QuickEntryPreset) {
+    const item = getServiceCatalogItem(preset.catalogItemId);
+    if (!item) return;
     setQuickEntryDraft((current) => ({
       ...current,
-      note: preset.note,
-      partName: preset.partName || current.partName,
+      assembly: item.assembly,
+      subAssembly: item.subAssembly,
+      partName: item.label,
+      catalogItemId: item.id,
     }));
     setActiveQuickHintId(preset.id);
+    setIsQuickEntryExpanded(true);
+    quickEntryInputRef.current?.focus();
+  }
+
+  function selectQuickEntryItem(itemId: string) {
+    const item = getServiceCatalogItem(itemId);
+    if (!item) return;
+    setQuickEntryDraft((current) => ({
+      ...current,
+      assembly: item.assembly,
+      subAssembly: item.subAssembly,
+      partName: item.label,
+      catalogItemId: item.id,
+    }));
     setIsQuickEntryExpanded(true);
     quickEntryInputRef.current?.focus();
   }
@@ -510,7 +642,10 @@ function App() {
       note: record.rawNote ?? record.note,
       occurredAt: new Date(record.createdAt).toISOString().slice(0, 10),
       mileage: record.mileage ? String(record.mileage) : '',
+      assembly: record.assembly ?? '',
+      subAssembly: record.subAssembly ?? '',
       partName: record.partName ?? '',
+      catalogItemId: findServiceCatalogItem(record.partName ?? '', record.assembly, record.subAssembly)?.id ?? undefined,
       cost: record.cost ? String(record.cost) : '',
       nextMileage: record.nextMileage ? String(record.nextMileage) : '',
       rating: record.rating,
@@ -531,7 +666,8 @@ function App() {
   }
 
   async function saveQuickEntry() {
-    const rawNote = quickEntryDraft.note.trim();
+    const selectedItem = findQuickEntryCatalogItem(quickEntryDraft);
+    const rawNote = composeQuickEntryNote(quickEntryDraft, selectedItem?.label);
     if (!rawNote) return;
     setIsSavingQuickEntry(true);
 
@@ -543,23 +679,26 @@ function App() {
 
       setState((current) => {
         const ensuredCar = buildLocalCar(current);
+        const hierarchy = buildQuickEntryPath(quickEntryDraft, selectedItem?.assembly, selectedItem?.subAssembly);
         const record: JournalRecord = {
           id: editingJournalId ?? `record-${Date.now()}`,
           carId: ensuredCar.activeCarId,
           createdAt,
           mileage,
           note: rawNote,
-          rawNote,
+          rawNote: quickEntryDraft.note.trim() || undefined,
           category: 'manual',
-          partName: quickEntryDraft.partName.trim() || undefined,
+          assembly: hierarchy.assembly,
+          subAssembly: hierarchy.subAssembly,
+          partName: (selectedItem?.label ?? quickEntryDraft.partName.trim()) || undefined,
           cost,
           nextMileage,
           rating: quickEntryDraft.rating,
         };
 
-        const subject = [record.note, record.partName].filter(Boolean).join(' ');
+        const subject = [record.note, record.assembly, record.subAssembly, record.partName].filter(Boolean).join(' ');
         const nextVehicleMileageKm = mileage && mileage > current.vehicle.mileageKm ? mileage : current.vehicle.mileageKm;
-        const nextMaintenance = mileage ? updateMaintenanceTasks(current.maintenance, mileage, quickEntryDraft.occurredAt, subject) : current.maintenance;
+        const nextMaintenance = mileage ? updateMaintenanceTasks(current.maintenance, mileage, quickEntryDraft.occurredAt, subject, selectedItem?.maintenanceTaskId) : current.maintenance;
         const nextJournal = editingJournalId ? current.journal.map((item) => item.id === editingJournalId ? record : item) : [record, ...current.journal];
 
         return {
@@ -1088,6 +1227,8 @@ function App() {
           <span className="source-badge neutral">{formatTimelineDate(record.createdAt)}</span>
           {record.mileage ? <span className="source-badge neutral">{record.mileage.toLocaleString('ru-RU')} км</span> : null}
           {record.nextMileage ? <span className="source-badge neutral">Следующая отметка: {record.nextMileage.toLocaleString('ru-RU')} км</span> : null}
+          {record.assembly ? <span className="source-badge neutral">{record.assembly}</span> : null}
+          {record.subAssembly ? <span className="source-badge neutral">{record.subAssembly}</span> : null}
         </div>
         <strong>{record.note}</strong>
         <div className="journal-details">
@@ -1217,7 +1358,7 @@ function App() {
               {state.role === 'owner' ? (
                 <>
                   <div className="field-row"><select value={state.vehicle.brand} onChange={(event) => updateVehicleBrand(event.target.value)}><option value="">Выберите марку</option>{vehicleBrandOptions.map((option) => <option key={option.brand} value={option.brand}>{option.brand}</option>)}</select></div>
-                  <div className="field-row"><select value={state.vehicle.model} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, model: event.target.value } }))} disabled={!state.vehicle.brand}><option value="">{state.vehicle.brand ? 'Выберите модель' : 'Сначала выберите марку'}</option>{selectedBrandOption.models.map((model) => <option key={model} value={model}>{model}</option>)}</select></div>
+                  <div className="field-row"><select value={state.vehicle.model} onChange={(event) => updateVehicleModel(event.target.value)} disabled={!state.vehicle.brand}><option value="">{state.vehicle.brand ? 'Выберите модель' : 'Сначала выберите марку'}</option>{selectedBrandOption.models.map((model) => <option key={model} value={model}>{model}</option>)}</select></div>
                   <div className="field-row"><input value={state.vehicle.plate} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, plate: event.target.value } }))} placeholder="Номер авто" /></div>
                   <div className="field-row"><input value={state.vehicle.vin} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, vin: event.target.value.toUpperCase() } }))} placeholder="VIN" /></div>
                 </>
@@ -1283,7 +1424,7 @@ function App() {
                       </div>
                       {isPassportExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
                     </button>
-                    {isPassportExpanded ? <div className="passport-expanded"><div className="vehicle-grid passport-details"><div><span>ID владельца</span><strong>{state.vehicle.ownerCode || 'Появится после регистрации'}</strong></div><div><span>VIN</span><strong>{state.vehicle.vin || 'Не указан'}</strong></div><div><span>Пробег</span><strong>{state.vehicle.mileageKm ? `${state.vehicle.mileageKm.toLocaleString('ru-RU')} км` : 'Не указан'}</strong></div><div><span>Двигатель</span><strong>{state.vehicle.engine || 'Не указан'}</strong></div><div><span>Цвет</span><strong>{state.vehicle.color}</strong></div><div><span>Осмотр</span><strong>{state.vehicle.nextInspection || 'Не указан'}</strong></div></div><div className="passport-share"><div className="owner-code-card"><strong>{state.vehicle.ownerCode || 'ID появится после регистрации'}</strong><p className="muted">Этот owner ID можно ввести вручную на СТО или передать по QR.</p></div>{ownerQrCode ? <div className="qr-card"><img src={ownerQrCode} alt="QR владельца" /><p className="muted">QR с owner ID</p></div> : null}</div><div className="panel-heading passport-edit-heading"><div><h2>Сведения об авто</h2><p className="muted">Редактирование собрано прямо внутри карточки машины.</p></div><div className="owner-overview-actions"><button className="ghost-button compact" onClick={prepareNewVehicle}><CarFront size={14} />Новая машина</button><button className="ghost-button compact" onClick={() => setIsVehicleEditorOpen((current) => !current)}><Pencil size={14} />{isVehicleEditorOpen ? 'Свернуть' : 'Изменить'}</button></div></div>{isVehicleEditorOpen ? <div className="cloud-card"><div className="field-row"><input value={profileName} onChange={(event) => setProfileName(event.target.value)} placeholder="Ваше имя и фамилия" /></div><div className="field-row"><select value={state.vehicle.brand} onChange={(event) => updateVehicleBrand(event.target.value)}><option value="">Выберите марку</option>{vehicleBrandOptions.map((option) => <option key={option.brand} value={option.brand}>{option.brand}</option>)}</select></div><div className="field-row"><select value={state.vehicle.model} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, model: event.target.value } }))} disabled={!state.vehicle.brand}><option value="">{state.vehicle.brand ? 'Выберите модель' : 'Сначала выберите марку'}</option>{selectedBrandOption.models.map((model) => <option key={model} value={model}>{model}</option>)}</select></div><div className="field-row"><input value={state.vehicle.plate} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, plate: event.target.value } }))} placeholder="Номер" /></div><div className="field-row"><input value={state.vehicle.vin} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, vin: event.target.value.toUpperCase() } }))} placeholder="VIN" /></div><div className="field-row"><input value={state.vehicle.mileageKm ? String(state.vehicle.mileageKm) : ''} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, mileageKm: Number.parseInt(event.target.value, 10) || 0 } }))} placeholder="Пробег" /></div><div className="field-row"><input value={state.vehicle.engine} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, engine: event.target.value } }))} placeholder="Двигатель" /></div><div className="field-row"><input value={state.vehicle.nextInspection} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, nextInspection: event.target.value } }))} placeholder="Следующий осмотр" /></div><button className="primary-button" onClick={() => { setState((current) => ({ ...current, ownerName: profileName.trim() })); setIsVehicleEditorOpen(false); setSyncStatus('Паспорт автомобиля обновлен локально.'); }}>Сохранить сведения</button></div> : null}</div> : null}
+                    {isPassportExpanded ? <div className="passport-expanded"><div className="vehicle-grid passport-details"><div><span>ID владельца</span><strong>{state.vehicle.ownerCode || 'Появится после регистрации'}</strong></div><div><span>VIN</span><strong>{state.vehicle.vin || 'Не указан'}</strong></div><div><span>Пробег</span><strong>{state.vehicle.mileageKm ? `${state.vehicle.mileageKm.toLocaleString('ru-RU')} км` : 'Не указан'}</strong></div><div><span>Двигатель</span><strong>{state.vehicle.engine || 'Не указан'}</strong></div><div><span>Цвет</span><strong>{state.vehicle.color}</strong></div><div><span>Осмотр</span><strong>{state.vehicle.nextInspection || 'Не указан'}</strong></div></div><div className="passport-share"><div className="owner-code-card"><strong>{state.vehicle.ownerCode || 'ID появится после регистрации'}</strong><p className="muted">Этот owner ID можно ввести вручную на СТО или передать по QR.</p></div>{ownerQrCode ? <div className="qr-card"><img src={ownerQrCode} alt="QR владельца" /><p className="muted">QR с owner ID</p></div> : null}</div><div className="panel-heading passport-edit-heading"><div><h2>Сведения об авто</h2><p className="muted">Редактирование собрано прямо внутри карточки машины.</p></div><div className="owner-overview-actions"><button className="ghost-button compact" onClick={prepareNewVehicle}><CarFront size={14} />Новая машина</button><button className="ghost-button compact" onClick={() => setIsVehicleEditorOpen((current) => !current)}><Pencil size={14} />{isVehicleEditorOpen ? 'Свернуть' : 'Изменить'}</button></div></div>{isVehicleEditorOpen ? <div className="cloud-card"><div className="field-row"><input value={profileName} onChange={(event) => setProfileName(event.target.value)} placeholder="Ваше имя и фамилия" /></div><div className="field-row"><select value={state.vehicle.brand} onChange={(event) => updateVehicleBrand(event.target.value)}><option value="">Выберите марку</option>{vehicleBrandOptions.map((option) => <option key={option.brand} value={option.brand}>{option.brand}</option>)}</select></div><div className="field-row"><select value={state.vehicle.model} onChange={(event) => updateVehicleModel(event.target.value)} disabled={!state.vehicle.brand}><option value="">{state.vehicle.brand ? 'Выберите модель' : 'Сначала выберите марку'}</option>{selectedBrandOption.models.map((model) => <option key={model} value={model}>{model}</option>)}</select></div><div className="field-row"><input value={state.vehicle.plate} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, plate: event.target.value } }))} placeholder="Номер" /></div><div className="field-row"><input value={state.vehicle.vin} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, vin: event.target.value.toUpperCase() } }))} placeholder="VIN" /></div><div className="field-row"><input value={state.vehicle.mileageKm ? String(state.vehicle.mileageKm) : ''} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, mileageKm: Number.parseInt(event.target.value, 10) || 0 } }))} placeholder="Пробег" /></div><div className="field-row"><input value={state.vehicle.engine} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, engine: event.target.value } }))} placeholder="Двигатель" /></div><div className="field-row"><input value={state.vehicle.nextInspection} onChange={(event) => setState((current) => ({ ...current, vehicle: { ...current.vehicle, nextInspection: event.target.value } }))} placeholder="Следующий осмотр" /></div><button className="primary-button" onClick={() => { setState((current) => ({ ...current, ownerName: profileName.trim() })); setIsVehicleEditorOpen(false); setSyncStatus('Паспорт автомобиля обновлен локально.'); }}>Сохранить сведения</button></div> : null}</div> : null}
                   </section>
                 ) : (
                   <div className="vehicle-card"><div className="vehicle-title">{state.role === 'mechanic' ? <Wrench size={20} /> : <Users size={20} />}<strong>{state.serviceCenter.name || 'СТО появится после регистрации'}</strong></div><p>{state.serviceCenter.city || 'Сначала завершите профиль'}</p><div className="vehicle-grid"><div><span>Постов</span><strong>{state.serviceCenter.bays || '—'}</strong></div><div><span>В работе</span><strong>{state.serviceQueue.filter((item) => item.status === 'in_service').length}</strong></div><div><span>Клиентов</span><strong>{state.clients.length}</strong></div><div><span>Ожидают механика</span><strong>{state.staff.filter((item) => item.role === 'mechanic' && item.approvalStatus === 'pending').length}</strong></div></div></div>
@@ -1315,7 +1456,7 @@ function App() {
                   <div className="panel-heading owner-entry-heading">
                     <div>
                       <h2>{editingJournalId ? 'Редактировать личную запись' : 'Ручная запись обслуживания'}</h2>
-                      <p className="muted">Только ручное добавление: короткая заметка, дата, пробег и понятные поля без автозаполнения.</p>
+                      <p className="muted">Выберите узел, подузел и начните печатать деталь или работу. Подсказки появляются сразу по ходу ввода.</p>
                     </div>
                     <div className="owner-entry-actions">
                       {quickEntryPresets.map((preset) => (
@@ -1332,20 +1473,76 @@ function App() {
                     </div>
                   </div>
                   <div className="quick-entry-shell">
-                    {activeQuickPreset ? (
+                    {activeQuickPreset && activeQuickPresetItem ? (
                       <div className="quick-preset-hint" role="status">
                         <strong>{activeQuickPreset.label}</strong>
-                        <p>{activeQuickPreset.hint}</p>
+                        <p>{activeQuickPresetItem.assembly} → {activeQuickPresetItem.subAssembly}. {activeQuickPreset.hint}</p>
                       </div>
                     ) : null}
+                    <div className="quick-entry-catalog-grid">
+                      <div className="field-row">
+                        <select
+                          value={quickEntryDraft.assembly}
+                          onChange={(event) => setQuickEntryDraft((current) => ({
+                            ...current,
+                            assembly: event.target.value,
+                            subAssembly: '',
+                            partName: '',
+                            catalogItemId: undefined,
+                          }))}
+                        >
+                          <option value="">Выберите узел</option>
+                          {assemblyOptions.map((assembly) => <option key={assembly} value={assembly}>{assembly}</option>)}
+                        </select>
+                      </div>
+                      <div className="field-row">
+                        <select
+                          value={quickEntryDraft.subAssembly}
+                          onChange={(event) => setQuickEntryDraft((current) => ({
+                            ...current,
+                            subAssembly: event.target.value,
+                            partName: '',
+                            catalogItemId: undefined,
+                          }))}
+                          disabled={!quickEntryDraft.assembly}
+                        >
+                          <option value="">{quickEntryDraft.assembly ? 'Выберите подузел' : 'Сначала выберите узел'}</option>
+                          {subAssemblyOptions.map((subAssembly) => <option key={subAssembly} value={subAssembly}>{subAssembly}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="quick-entry-search">
+                      <div className="field-row quick-entry-primary">
+                        <input
+                          value={quickEntryDraft.partName}
+                          onChange={(event) => setQuickEntryDraft((current) => ({
+                            ...current,
+                            partName: event.target.value,
+                            catalogItemId: undefined,
+                          }))}
+                          placeholder="Начните вводить: масло, колодки, сцепление, шрус..."
+                        />
+                      </div>
+                      {(quickEntryDraft.partName.trim().length >= 1 || (quickEntryDraft.assembly && quickEntryDraft.subAssembly)) && quickEntrySuggestions.length ? (
+                        <div className="quick-entry-suggestions">
+                          {quickEntrySuggestions.map((item) => (
+                            <button key={item.id} className="quick-entry-suggestion" onClick={() => selectQuickEntryItem(item.id)}>
+                              <strong>{item.label}</strong>
+                              <span>{item.assembly} • {item.subAssembly}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                    {selectedQuickEntryItem ? <p className="quick-entry-selected muted">Выбрано: {selectedQuickEntryItem.assembly} → {selectedQuickEntryItem.subAssembly} → {selectedQuickEntryItem.label}</p> : null}
                     <div className="field-row quick-entry-primary">
                       <input
                         ref={quickEntryInputRef}
                         value={quickEntryDraft.note}
                         onChange={(event) => setQuickEntryDraft((current) => ({ ...current, note: event.target.value }))}
-                        placeholder="Например: заменил масло и фильтр"
+                        placeholder="Комментарий: что сделали, что не подошло, что заметили"
                       />
-                      <button className="primary-button big-add-button" onClick={saveQuickEntry} disabled={isSavingQuickEntry || !quickEntryDraft.note.trim()}><Plus size={18} />{editingJournalId ? 'Сохранить' : 'Добавить'}</button>
+                      <button className="primary-button big-add-button" onClick={saveQuickEntry} disabled={isSavingQuickEntry || (!quickEntryDraft.note.trim() && !quickEntryDraft.partName.trim())}><Plus size={18} />{editingJournalId ? 'Сохранить' : 'Добавить'}</button>
                     </div>
                     <button className="ghost-button compact inline-toggle" onClick={() => setIsQuickEntryExpanded((current) => !current)}>{isQuickEntryExpanded ? 'Скрыть доп. поля' : 'Показать доп. поля'}</button>
                     {isQuickEntryExpanded ? (

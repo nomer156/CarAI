@@ -28,6 +28,8 @@ export type JournalRecord = {
   mileage?: number;
   note: string;
   category?: string;
+  assembly?: string;
+  subAssembly?: string;
   partName?: string;
   rating?: 'good' | 'bad';
   cost?: number;

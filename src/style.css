@@ -1090,6 +1090,47 @@ h2 {
   gap: 12px;
 }
 
+.quick-entry-catalog-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.quick-entry-search {
+  display: grid;
+  gap: 8px;
+}
+
+.quick-entry-suggestions {
+  display: grid;
+  gap: 8px;
+}
+
+.quick-entry-suggestion {
+  display: grid;
+  gap: 4px;
+  justify-items: flex-start;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(33, 76, 106, 0.18);
+  background: var(--panel-strong);
+  color: var(--text);
+  text-align: left;
+}
+
+.quick-entry-suggestion strong {
+  font-size: 0.95rem;
+}
+
+.quick-entry-suggestion span {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.quick-entry-selected {
+  margin: 0;
+}
+
 .quick-preset-hint {
   display: grid;
   gap: 4px;
@@ -1253,6 +1294,7 @@ h2 {
   .parts-grid,
   .passport-share,
   .part-meta-grid,
+  .quick-entry-catalog-grid,
   .quick-entry-optional,
   .maintenance-summary-grid,
   .service-summary-grid,

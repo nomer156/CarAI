@@ -1,7 +1,4 @@
 alter table public.parts
-add column if not exists installation_source text not null default 'service';
-
-alter table public.parts
 add column if not exists installed_at date;
 
 alter table public.parts
@@ -9,13 +6,6 @@ add column if not exists installed_mileage_km int;
 
 alter table public.parts
 add column if not exists next_replacement_km int;
-
-alter table public.parts
-drop constraint if exists parts_installation_source_check;
-
-alter table public.parts
-add constraint parts_installation_source_check
-check (installation_source in ('self', 'service'));
 
 create or replace function public.upsert_vehicle_part(
   target_owner_code text,
@@ -135,68 +125,3 @@ end;
 $$;
 
 grant execute on function public.upsert_vehicle_part(text, uuid, text, text, text, numeric, text, text, text, date, int, int) to authenticated;
-
-create or replace function public.add_service_record_by_owner_code(
-  target_owner_code text,
-  record_title text,
-  record_details text default null,
-  record_location text default null
-)
-returns uuid
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  current_user_id uuid := auth.uid();
-  actor_role text;
-  target_vehicle_id uuid;
-  saved_record_id uuid;
-begin
-  if current_user_id is null then
-    raise exception 'Not authenticated';
-  end if;
-
-  select role into actor_role
-  from public.users
-  where id = current_user_id;
-
-  if coalesce(actor_role, '') not in ('mechanic', 'service_admin', 'company_admin') then
-    raise exception 'Insufficient permissions';
-  end if;
-
-  select id into target_vehicle_id
-  from public.vehicles
-  where owner_code = target_owner_code
-  order by created_at asc
-  limit 1;
-
-  if target_vehicle_id is null then
-    raise exception 'Vehicle not found';
-  end if;
-
-  insert into public.service_records (
-    vehicle_id,
-    mechanic_id,
-    service_date,
-    title,
-    location,
-    details,
-    verified
-  )
-  values (
-    target_vehicle_id,
-    current_user_id,
-    current_date,
-    record_title,
-    nullif(record_location, ''),
-    nullif(record_details, ''),
-    true
-  )
-  returning id into saved_record_id;
-
-  return saved_record_id;
-end;
-$$;
-
-grant execute on function public.add_service_record_by_owner_code(text, text, text, text) to authenticated;

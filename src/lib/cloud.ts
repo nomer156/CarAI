@@ -39,6 +39,9 @@ type CloudPartRow = {
   status: 'ok' | 'watch' | 'replace';
   note: string | null;
   installation_source: 'self' | 'service' | null;
+  installed_at: string | null;
+  installed_mileage_km: number | null;
+  next_replacement_km: number | null;
 };
 
 type CloudMaintenanceRow = {
@@ -276,6 +279,9 @@ function mapParts(rows: CloudPartRow[]): Part[] {
     status: row.status,
     note: row.note ?? '',
     installationSource: row.installation_source === 'self' ? 'self' : 'service',
+    installedAt: row.installed_at,
+    installedMileageKm: row.installed_mileage_km,
+    nextReplacementKm: row.next_replacement_km,
   }));
 }
 
@@ -489,7 +495,7 @@ export async function loadGarageStateFromCloud() {
     documentsResult,
     offersResult,
   ] = await Promise.all([
-    supabase.from('parts').select('id, name, oem, manufacturer, price, status, note, installation_source').eq('vehicle_id', vehicle.id),
+    supabase.from('parts').select('id, name, oem, manufacturer, price, status, note, installation_source, installed_at, installed_mileage_km, next_replacement_km').eq('vehicle_id', vehicle.id),
     supabase
       .from('maintenance_tasks')
       .select('id, title, due_at_km, last_done_km, interval_km, priority, notes')
@@ -689,6 +695,9 @@ export async function upsertVehiclePart(input: {
   status: 'ok' | 'watch' | 'replace';
   note: string;
   installationSource: 'self' | 'service';
+  installedAt?: string | null;
+  installedMileageKm?: number | null;
+  nextReplacementKm?: number | null;
 }) {
   if (!supabase || !isSupabaseEnabled) {
     throw new Error('Supabase is not configured.');
@@ -704,6 +713,9 @@ export async function upsertVehiclePart(input: {
     part_status: input.status,
     part_note: input.note,
     part_source: input.installationSource,
+    part_installed_at: input.installedAt ?? null,
+    part_installed_mileage_km: input.installedMileageKm ?? null,
+    part_next_replacement_km: input.nextReplacementKm ?? null,
   });
 
   if (error) {

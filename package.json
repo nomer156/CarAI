@@ -8,9 +8,6 @@
     "build": "tsc && vite build",
     "preview": "npm run build && wrangler dev",
     "preview:vite": "vite preview",
-    "ai:server": "node local-ai/server.mjs",
-    "ai:tunnel:quick": "powershell -NoProfile -Command \"& 'C:\\Program Files (x86)\\cloudflared\\cloudflared.exe' tunnel --url http://127.0.0.1:11535\"",
-    "ai:public": "powershell -ExecutionPolicy Bypass -File scripts/start-public-ai.ps1",
     "deploy": "npm run build && wrangler deploy"
   },
   "devDependencies": {

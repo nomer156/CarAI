@@ -1,7 +1,7 @@
 {
   "name": "CodexCar",
   "short_name": "CodexCar",
-  "description": "Цифровой паспорт автомобиля с каталогом деталей, историей ремонта и AI-помощником.",
+  "description": "Цифровой сервисный паспорт автомобиля с деталями, регламентом и историей обслуживания.",
   "theme_color": "#12161a",
   "background_color": "#12161a",
   "display": "standalone",

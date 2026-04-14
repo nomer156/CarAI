@@ -33,6 +33,12 @@ function normalizeGarageState(state: GarageState | undefined): GarageState {
     cars: state.cars?.length ? state.cars : demoState.cars,
     activeCarId: state.activeCarId ?? state.cars?.[0]?.id ?? demoState.activeCarId,
     journal: state.journal ?? demoState.journal,
+    parts: (state.parts ?? demoState.parts).map((part) => ({
+      ...part,
+      installedAt: part.installedAt ?? null,
+      installedMileageKm: part.installedMileageKm ?? null,
+      nextReplacementKm: part.nextReplacementKm ?? null,
+    })),
   };
 }
 

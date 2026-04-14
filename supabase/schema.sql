@@ -92,6 +92,9 @@ create table public.parts (
   status text not null check (status in ('ok', 'watch', 'replace')),
   note text,
   installation_source text not null default 'service' check (installation_source in ('self', 'service')),
+  installed_at date,
+  installed_mileage_km int,
+  next_replacement_km int,
   created_at timestamptz not null default now()
 );
 

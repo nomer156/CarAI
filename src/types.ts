@@ -33,7 +33,6 @@ export type JournalRecord = {
   cost?: number;
   nextMileage?: number;
   rawNote?: string;
-  source?: 'manual' | 'ai';
 };
 
 export type Part = {
@@ -45,6 +44,9 @@ export type Part = {
   status: 'ok' | 'watch' | 'replace';
   note: string;
   installationSource: 'self' | 'service';
+  installedAt: string | null;
+  installedMileageKm: number | null;
+  nextReplacementKm: number | null;
 };
 
 export type MaintenanceTask = {
